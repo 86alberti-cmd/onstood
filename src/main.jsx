@@ -90,12 +90,14 @@ function fmtDate(value) {
   }
 }
 
-
-/* =========================================================
+   /* 
+   =========================================================
    AUTH
-   ========================================================= */
+   ========================================================= 
+   */
 
 function Auth({ onReady }) {
+
   const [mode, setMode] = useState('login');
 
   const [form, setForm] = useState({
@@ -111,72 +113,220 @@ function Auth({ onReady }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+
   function setField(key, value) {
+
     setForm(current => ({
       ...current,
       [key]: value
     }));
+
   }
 
+
   async function submit(event) {
+
     event.preventDefault();
 
     setBusy(true);
     setMessage('');
 
     try {
+
+      /* 
+      =========================
+         LOGIN
+      ========================= 
+      */
+
       if (mode === 'login') {
-        const { data, error } =
-          await supabase.auth.signInWithPassword({
-            email: form.email,
-            password: form.password
-          });
 
-        if (error) {
-          setMessage(error.message);
-          return;
-        }
-
-        onReady(data.session);
-        return;
-      }
-
-      const { data, error } =
-        await supabase.auth.signUp({
+        const {
+          data,
+          error
+        } = await supabase.auth.signInWithPassword({
           email: form.email,
-          password: form.password,
-          options: {
-            data: {
-              name: form.name,
-              surname: form.surname,
-              university: form.university,
-              degree: form.degree,
-              year: form.year
-            }
-          }
+          password: form.password
         });
 
-      if (error) {
-        setMessage(error.message);
+
+        if (error) {
+
+          setMessage(error.message);
+          return;
+
+        }
+
+
+        onReady(data.session);
         return;
+
       }
 
+
+      /* 
+      =========================
+         CREATE ACCOUNT
+      ========================= 
+      */
+
+      const {
+        data,
+        error
+      } = await supabase.auth.signUp({
+
+        email: form.email,
+        password: form.password,
+
+        options: {
+
+          emailRedirectTo:
+            window.location.origin,
+
+          data: {
+            name: form.name,
+            surname: form.surname,
+            university: form.university,
+            degree: form.degree,
+            year: form.year
+          }
+
+        }
+
+      });
+
+
+      if (error) {
+
+        setMessage(error.message);
+        return;
+
+      }
+
+
       if (data.session) {
+
         onReady(data.session);
+
       } else {
+
         setMessage(
           'Check your email to verify your ONSTOOD account.'
         );
+
       }
+
     } finally {
+
       setBusy(false);
+
     }
+
   }
 
+
+  	/* 
+	=========================
+    	 GOOGLE LOGIN
+     	========================= 
+	*/
+
+  async function signInWithGoogle() {
+
+    setBusy(true);
+    setMessage('');
+
+    const {
+      error
+    } = await supabase.auth.signInWithOAuth({
+
+      provider: 'google',
+
+      options: {
+
+        redirectTo:
+          window.location.origin
+
+      }
+
+    });
+
+
+    if (error) {
+
+      setMessage(error.message);
+      setBusy(false);
+
+    }
+
+  }
+
+
+     /* 
+     =========================
+     FORGOT PASSWORD
+     ========================= 
+     */
+
+  async function forgotPassword() {
+
+    if (!form.email) {
+
+      setMessage(
+        'Enter your email address first.'
+      );
+
+      return;
+
+    }
+
+
+    setBusy(true);
+    setMessage('');
+
+    const {
+      error
+    } =
+      await supabase.auth.resetPasswordForEmail(
+        form.email,
+        {
+          redirectTo:
+            window.location.origin
+        }
+      );
+
+
+    if (error) {
+
+      setMessage(error.message);
+
+    } else {
+
+      setMessage(
+        'Password reset email sent. Check your inbox.'
+      );
+
+    }
+
+
+    setBusy(false);
+
+  }
+
+
   return (
+
     <div className="auth-shell">
 
+      {
+      /* 
+      =========================
+          LEFT SIDE
+      ========================= 
+      */}
+
       <div className="auth-left">
+
         <div className="brand huge">
           ONSTOOD<span>.</span>
         </div>
@@ -193,12 +343,22 @@ function Auth({ onReady }) {
         </p>
 
         <div className="auth-pills">
+
           <span>Connect</span>
           <span>Learn</span>
           <span>Grow</span>
+
         </div>
+
       </div>
 
+
+      {
+      /* 
+        =========================
+          AUTH CARD
+         ========================= 
+         */}
 
       <div className="auth-card">
 
@@ -210,61 +370,106 @@ function Auth({ onReady }) {
           The student network for the next generation.
         </p>
 
+
+        {/* TABS */}
+
         <div className="tabs">
+
           <button
-            className={mode === 'login' ? 'active' : ''}
+            type="button"
+            className={
+              mode === 'login'
+                ? 'active'
+                : ''
+            }
             onClick={() => {
+
               setMode('login');
               setMessage('');
+
             }}
           >
             Sign in
           </button>
 
+
           <button
-            className={mode === 'register' ? 'active' : ''}
+            type="button"
+            className={
+              mode === 'register'
+                ? 'active'
+                : ''
+            }
             onClick={() => {
+
               setMode('register');
               setMessage('');
+
             }}
           >
             Create account
           </button>
+
         </div>
+
+
+        {/* FORM */}
 
         <form onSubmit={submit}>
 
+          {/* REGISTER FIELDS */}
+
           {mode === 'register' && (
+
             <div className="grid2">
+
               <input
                 placeholder="First name"
                 value={form.name}
                 onChange={e =>
-                  setField('name', e.target.value)
+                  setField(
+                    'name',
+                    e.target.value
+                  )
                 }
                 required
               />
+
 
               <input
                 placeholder="Last name"
                 value={form.surname}
                 onChange={e =>
-                  setField('surname', e.target.value)
+                  setField(
+                    'surname',
+                    e.target.value
+                  )
                 }
                 required
               />
+
             </div>
+
           )}
+
+
+          {/* EMAIL */}
 
           <input
             type="email"
             placeholder="Email"
             value={form.email}
             onChange={e =>
-              setField('email', e.target.value)
+              setField(
+                'email',
+                e.target.value
+              )
             }
             required
           />
+
+
+          {/* PASSWORD */}
 
           <input
             type="password"
@@ -272,20 +477,32 @@ function Auth({ onReady }) {
             minLength="6"
             value={form.password}
             onChange={e =>
-              setField('password', e.target.value)
+              setField(
+                'password',
+                e.target.value
+              )
             }
             required
           />
 
+
+          {/* EXTRA REGISTER DATA */}
+
           {mode === 'register' && (
+
             <>
+
               <input
                 placeholder="University"
                 value={form.university}
                 onChange={e =>
-                  setField('university', e.target.value)
+                  setField(
+                    'university',
+                    e.target.value
+                  )
                 }
               />
+
 
               <div className="grid2">
 
@@ -293,16 +510,24 @@ function Auth({ onReady }) {
                   placeholder="Degree / field"
                   value={form.degree}
                   onChange={e =>
-                    setField('degree', e.target.value)
+                    setField(
+                      'degree',
+                      e.target.value
+                    )
                   }
                 />
+
 
                 <select
                   value={form.year}
                   onChange={e =>
-                    setField('year', e.target.value)
+                    setField(
+                      'year',
+                      e.target.value
+                    )
                   }
                 >
+
                   <option value="">
                     Study year
                   </option>
@@ -316,48 +541,105 @@ function Auth({ onReady }) {
                     'Master II',
                     'PhD'
                   ].map(year => (
-                    <option key={year}>
+
+                    <option
+                      key={year}
+                      value={year}
+                    >
                       {year}
                     </option>
+
                   ))}
+
                 </select>
 
               </div>
+
             </>
+
           )}
 
+
+          {/* MESSAGE */}
+
           {message && (
+
             <div className="message">
               {message}
             </div>
+
           )}
 
+
+          {/* MAIN BUTTON */}
+
           <button
+            type="submit"
             className="btn primary full"
             disabled={busy}
           >
+
             {busy
               ? 'Please wait…'
               : mode === 'login'
                 ? 'Sign in to ONSTOOD'
                 : 'Create my account'}
+
           </button>
 
         </form>
+
+
+        {/* GOOGLE + PASSWORD */}
+
+        {mode === 'login' && (
+
+          <>
+
+            <button
+              type="button"
+              className="btn full"
+              onClick={signInWithGoogle}
+              disabled={busy}
+            >
+              Continue with Google
+            </button>
+
+
+            <button
+              type="button"
+              className="muted"
+              onClick={forgotPassword}
+              disabled={busy}
+            >
+              Forgot password?
+            </button>
+
+          </>
+
+        )}
+
 
         <small className="muted">
           Secure authentication powered by Supabase.
         </small>
 
       </div>
+
     </div>
+
   );
+
 }
 
 
-/* =========================================================
+   /* 
+   =========================================================
    APP
-   ========================================================= */
+   ========================================================= 
+   */
+
+
 
 function App({ session }) {
 
@@ -365,6 +647,10 @@ function App({ session }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
+  const [notifications, setNotifications] = useState([]);
+  const [notificationCounts, setNotificationCounts] = useState({});
+  const [showNotifications, setShowNotifications] = useState(false);
+
 
   useEffect(() => {
 
@@ -383,9 +669,6 @@ function App({ session }) {
           return;
         }
 
-        /*
-         * 1. Try to load existing profile
-         */
         const { data, error } =
           await supabase
             .from('profiles')
@@ -394,16 +677,16 @@ function App({ session }) {
             .maybeSingle();
 
         if (error) {
-          console.error('Profile load error:', error);
+          console.error(
+            'Profile load error:',
+            error
+          );
         }
 
-        /*
-         * 2. If profile doesn't exist,
-         * create it from Auth metadata.
-         */
         if (!data) {
 
-          const metadata = user.user_metadata || {};
+          const metadata =
+            user.user_metadata || {};
 
           const newProfile = {
             id: user.id,
@@ -471,6 +754,244 @@ function App({ session }) {
   }, [session?.user?.id]);
 
 
+  /*
+   * =========================================================
+   * NOTIFICATIONS HELPERS
+   * =========================================================
+   */
+
+  function getNotificationSection(kind) {
+
+    const map = {
+      friend_request: 'friends',
+      calendar: 'calendar',
+      task: 'tasks',
+      document: 'docs',
+      course: 'courses',
+      job: 'jobs'
+    };
+
+    return map[kind] || null;
+  }
+
+
+  async function markSectionNotificationsRead(sectionId) {
+
+    const kinds = {
+      friends: 'friend_request',
+      calendar: 'calendar',
+      tasks: 'task',
+      docs: 'document',
+      courses: 'course',
+      jobs: 'job'
+    };
+
+    const kind = kinds[sectionId];
+
+    if (!kind || !session?.user?.id) {
+      return;
+    }
+
+    const readAt =
+      new Date().toISOString();
+
+    const { error } =
+      await supabase
+        .from('notifications')
+        .update({
+          read_at: readAt
+        })
+        .eq(
+          'user_id',
+          session.user.id
+        )
+        .eq(
+          'kind',
+          kind
+        )
+        .is(
+          'read_at',
+          null
+        );
+
+    if (error) {
+
+      console.error(
+        'Mark notifications read error:',
+        error
+      );
+
+      return;
+    }
+
+    setNotificationCounts(current => ({
+      ...current,
+      [sectionId]: 0
+    }));
+
+    setNotifications(current =>
+      current.map(notification =>
+        notification.kind === kind
+          ? {
+              ...notification,
+              read_at: readAt
+            }
+          : notification
+      )
+    );
+  }
+
+
+  function calculateNotificationCounts(data) {
+
+    const counts = {};
+
+    (data || []).forEach(notification => {
+
+      if (notification.read_at) {
+        return;
+      }
+
+      const section =
+        getNotificationSection(
+          notification.kind
+        );
+
+      if (!section) {
+        return;
+      }
+
+      counts[section] =
+        (counts[section] || 0) + 1;
+
+    });
+
+    return counts;
+  }
+
+
+  /*
+   * =========================================================
+   * LOAD + REALTIME NOTIFICATIONS
+   * =========================================================
+   */
+
+  useEffect(() => {
+
+    if (!session?.user?.id) {
+      return;
+    }
+
+    let active = true;
+
+    async function loadNotifications() {
+
+      const {
+        data,
+        error
+      } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq(
+          'user_id',
+          session.user.id
+        )
+        .order(
+          'created_at',
+          {
+            ascending: false
+          }
+        )
+        .limit(30);
+
+      if (error) {
+
+        console.error(
+          'Notifications load error:',
+          error
+        );
+
+        return;
+      }
+
+      if (!active) {
+        return;
+      }
+
+      setNotifications(data || []);
+
+      setNotificationCounts(
+        calculateNotificationCounts(data)
+      );
+    }
+
+    loadNotifications();
+
+    const channel =
+      supabase
+        .channel(
+          `notifications-${session.user.id}`
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter:
+              `user_id=eq.${session.user.id}`
+          },
+          payload => {
+
+            const notification =
+              payload.new;
+
+            setNotifications(current => [
+              notification,
+              ...current
+            ]);
+
+            if (!notification.read_at) {
+
+              const section =
+                getNotificationSection(
+                  notification.kind
+                );
+
+              if (section) {
+
+                setNotificationCounts(
+                  current => ({
+                    ...current,
+                    [section]:
+                      (current[section] || 0) + 1
+                  })
+                );
+
+              }
+            }
+
+            setToast(
+              notification.title ||
+              'New notification'
+            );
+          }
+        )
+        .subscribe();
+
+    return () => {
+
+      active = false;
+
+      supabase.removeChannel(
+        channel
+      );
+
+    };
+
+  }, [session?.user?.id]);
+
+
   async function logout() {
     await supabase.auth.signOut();
   }
@@ -530,15 +1051,17 @@ function App({ session }) {
         </div>
 
         <div className="top-actions">
-
-          <button
-            className="icon-btn"
-            onClick={() =>
-              notify('Notifications will appear here.')
-            }
-          >
-            <Bell size={19} />
-          </button>
+<button
+  className="icon-btn notification-btn"
+  onClick={() =>
+    setShowNotifications(
+      current => !current
+    )
+  }
+>
+  <Bell size={19} />
+  
+</button>
 
           <button
             className="icon-btn ai-icon"
@@ -583,33 +1106,94 @@ function App({ session }) {
           </button>
 
 
-          <nav>
+     
+        <nav>
 
-            {NAV.map(([id, label, Icon]) => (
+  {NAV.map(([id, label, Icon]) => {
 
-              <button
-                key={id}
-                className={
-                  section === id
-                    ? 'selected'
-                    : ''
-                }
-                onClick={() => setSection(id)}
-              >
+    const count = notificationCounts[id] || 0;
 
-                <Icon size={18} />
+    return (
 
-                <span>{label}</span>
+      <button
+  key={id}
+  className={
+    section === id
+      ? 'selected'
+      : ''
+  }
+  onClick={() => {
+    setSection(id);
+    markSectionNotificationsRead(id);
+  }}
+      >
 
-                {id === 'ai' && (
-                  <em>NEW</em>
-                )}
+        <span
+          style={{
+            position: 'relative',
+            display: 'inline-flex'
+          }}
+        >
 
-              </button>
+          <Icon size={18} />
 
-            ))}
+          {count > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: '-12px',
+                right: '-14px',
+                minWidth: '20px',
+                height: '17px',
+                padding: '0 5px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: '#ef4444',
+                color: '#fff',
+                borderRadius: '10px',
+                fontSize: '10px',
+                fontWeight: '700',
+                lineHeight: '1',
+                zIndex: 5,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.25)'
+              }}
+            >
 
-          </nav>
+              {count > 99 ? '99+' : count}
+
+              <span
+                style={{
+                  position: 'absolute',
+                  bottom: '-3px',
+                  left: '4px',
+                  width: '6px',
+                  height: '6px',
+                  background: '#ef4444',
+                  borderRadius: '50%'
+                }}
+              />
+
+            </span>
+          )}
+
+        </span>
+
+        <span>{label}</span>
+
+        {id === 'ai' && (
+          <em>NEW</em>
+        )}
+
+      </button>
+
+    );
+
+  })}
+
+    </nav>
+
+
 
 
           <button
@@ -800,11 +1384,11 @@ function HomePage({
           body,
           created_at,
           user_id,
-          profiles (
-            name,
-            surname,
-            university
-          )
+         profiles!posts_user_id_fkey (
+  name,
+  surname,
+  university
+)
         `)
         .order('created_at', {
           ascending: false
