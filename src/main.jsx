@@ -632,6 +632,242 @@ function Auth({ onReady }) {
 
 }
 
+    /* 
+   =========================================================
+   RESET PASSWORD
+   ========================================================= 
+   */
+
+function ResetPassword({ onDone }) {
+
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [success, setSuccess] = useState(false);
+
+
+  async function updatePassword(event) {
+
+    event.preventDefault();
+
+    setMessage('');
+
+
+    if (password.length < 6) {
+
+      setMessage(
+        'Password must be at least 6 characters.'
+      );
+
+      return;
+
+    }
+
+
+    if (password !== confirmPassword) {
+
+      setMessage(
+        'Passwords do not match.'
+      );
+
+      return;
+
+    }
+
+
+    setBusy(true);
+
+
+    const {
+      error
+    } = await supabase.auth.updateUser({
+      password
+    });
+
+
+    if (error) {
+
+      setMessage(error.message);
+      setBusy(false);
+      return;
+
+    }
+
+
+    setSuccess(true);
+    setBusy(false);
+
+  }
+
+
+  async function continueToLogin() {
+
+    await supabase.auth.signOut();
+
+    onDone();
+
+  }
+
+
+  if (success) {
+
+    return (
+
+      <div className="auth-shell">
+
+        <div className="auth-left">
+
+          <div className="brand huge">
+            ONSTOOD<span>.</span>
+          </div>
+
+          <h1>
+            Password updated.
+            <br />
+            You're back in control.
+          </h1>
+
+          <p>
+            Your ONSTOOD password has been changed
+            successfully.
+          </p>
+
+        </div>
+
+
+        <div className="auth-card">
+
+          <div className="brand">
+            ONSTOOD<span>.</span>
+          </div>
+
+          <div className="message">
+            Password updated successfully.
+          </div>
+
+          <button
+            type="button"
+            className="btn primary full"
+            onClick={continueToLogin}
+          >
+            Continue to sign in
+          </button>
+
+        </div>
+
+      </div>
+
+    );
+
+  }
+
+
+  return (
+
+    <div className="auth-shell">
+
+      <div className="auth-left">
+
+        <div className="brand huge">
+          ONSTOOD<span>.</span>
+        </div>
+
+        <h1>
+          Create a new
+          <br />
+          password.
+        </h1>
+
+        <p>
+          Choose a new password for your ONSTOOD
+          account and get back to your student life.
+        </p>
+
+        <div className="auth-pills">
+
+          <span>Secure</span>
+          <span>Simple</span>
+          <span>ONSTOOD</span>
+
+        </div>
+
+      </div>
+
+
+      <div className="auth-card">
+
+        <div className="brand">
+          ONSTOOD<span>.</span>
+        </div>
+
+        <p className="muted">
+          Set your new password below.
+        </p>
+
+
+        <form onSubmit={updatePassword}>
+
+          <input
+            type="password"
+            placeholder="New password"
+            minLength="6"
+            value={password}
+            onChange={e =>
+              setPassword(e.target.value)
+            }
+            required
+          />
+
+
+          <input
+            type="password"
+            placeholder="Confirm new password"
+            minLength="6"
+            value={confirmPassword}
+            onChange={e =>
+              setConfirmPassword(e.target.value)
+            }
+            required
+          />
+
+
+          {message && (
+
+            <div className="message">
+              {message}
+            </div>
+
+          )}
+
+
+          <button
+            type="submit"
+            className="btn primary full"
+            disabled={busy}
+          >
+
+            {busy
+              ? 'Updating password…'
+              : 'Update password'}
+
+          </button>
+
+        </form>
+
+
+        <small className="muted">
+          Secure authentication powered by Supabase.
+        </small>
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
 
    /* 
    =========================================================
@@ -3518,6 +3754,9 @@ function Root() {
   const [loading, setLoading] =
     useState(true);
 
+  const [recoveryMode, setRecoveryMode] =
+    useState(false);
+
 
   useEffect(() => {
 
@@ -3559,7 +3798,13 @@ function Root() {
     const {
       data: authData
     } = supabase.auth.onAuthStateChange(
-      (_event, newSession) => {
+      (event, newSession) => {
+
+        if (event === 'PASSWORD_RECOVERY') {
+
+          setRecoveryMode(true);
+
+        }
 
         setSession(newSession);
 
@@ -3589,6 +3834,19 @@ function Root() {
   }
 
 
+  if (recoveryMode) {
+
+    return (
+      <ResetPassword
+        onDone={() => {
+          setRecoveryMode(false);
+        }}
+      />
+    );
+
+  }
+
+
   if (!session) {
 
     return (
@@ -3605,7 +3863,9 @@ function Root() {
       session={session}
     />
   );
+
 }
+
 
 
 /* =========================================================
