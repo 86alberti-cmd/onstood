@@ -1212,6 +1212,8 @@ function Friends({
 
   const [people, setPeople] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [connections, setConnections] = useState([]);
+  const [outgoing, setOutgoing] = useState([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -1225,7 +1227,8 @@ function Friends({
       setLoading(true);
 
       const {
-        data: peopleData
+        data: peopleData,
+        error: peopleError
       } = await supabase
         .from('profiles')
         .select(`
@@ -1237,11 +1240,12 @@ function Friends({
           year
         `)
         .neq('id', profile.id)
-        .limit(50);
+        .limit(100);
 
 
       const {
-        data: requestData
+        data: requestData,
+        error: requestError
       } = await supabase
         .from('friend_requests')
         .select('*')
@@ -1249,15 +1253,59 @@ function Friends({
         .eq('status', 'pending');
 
 
+      const {
+        data: outgoingData,
+        error: outgoingError
+      } = await supabase
+        .from('friend_requests')
+        .select('*')
+        .eq('sender_id', profile.id)
+        .eq('status', 'pending');
+
+
+      const {
+        data: connectionData,
+        error: connectionError
+      } = await supabase
+        .from('friend_requests')
+        .select('*')
+        .eq('status', 'accepted')
+        .or(
+          `sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`
+        );
+
+
       if (!active) return;
+
+
+      if (peopleError) {
+        notify(peopleError.message);
+      }
+
+      if (requestError) {
+        notify(requestError.message);
+      }
+
+      if (outgoingError) {
+        notify(outgoingError.message);
+      }
+
+      if (connectionError) {
+        notify(connectionError.message);
+      }
+
 
       setPeople(peopleData || []);
       setRequests(requestData || []);
+      setOutgoing(outgoingData || []);
+      setConnections(connectionData || []);
       setLoading(false);
 
     }
 
+
     loadNetwork();
+
 
     return () => {
       active = false;
@@ -1266,12 +1314,67 @@ function Friends({
   }, [profile.id]);
 
 
-  const filtered =
+  const connectionIds = new Set(
+    connections.map(connection =>
+      connection.sender_id === profile.id
+        ? connection.receiver_id
+        : connection.sender_id
+    )
+  );
+
+
+  const incomingIds = new Set(
+    requests.map(request =>
+      request.sender_id
+    )
+  );
+
+
+  const outgoingIds = new Set(
+    outgoing.map(request =>
+      request.receiver_id
+    )
+  );
+
+
+  const connectionProfiles =
     people.filter(person =>
-      `${person.name || ''} ${person.surname || ''} ${person.university || ''}`
-        .toLowerCase()
-        .includes(q.toLowerCase())
+      connectionIds.has(person.id)
     );
+
+
+  const incomingProfiles =
+    people.filter(person =>
+      incomingIds.has(person.id)
+    );
+
+
+  const filteredPeople =
+    people.filter(person => {
+
+      if (connectionIds.has(person.id)) {
+        return false;
+      }
+
+      if (incomingIds.has(person.id)) {
+        return false;
+      }
+
+      if (outgoingIds.has(person.id)) {
+        return false;
+      }
+
+
+      const text =
+        `${person.name || ''} ${person.surname || ''} ${person.university || ''} ${person.degree || ''}`
+          .toLowerCase();
+
+
+      return text.includes(
+        q.toLowerCase()
+      );
+
+    });
 
 
   async function connect(receiverId) {
@@ -1297,7 +1400,19 @@ function Friends({
       return;
     }
 
+
     notify('Connection request sent.');
+
+
+    setOutgoing(current => [
+      ...current,
+      {
+        receiver_id: receiverId,
+        sender_id: profile.id,
+        status: 'pending'
+      }
+    ]);
+
   }
 
 
@@ -1318,13 +1433,65 @@ function Friends({
       return;
     }
 
-    notify('Connection accepted.');
+
+    const acceptedRequest =
+      requests.find(request =>
+        request.id === requestId
+      );
+
 
     setRequests(current =>
       current.filter(request =>
         request.id !== requestId
       )
     );
+
+
+    if (acceptedRequest) {
+
+      setConnections(current => [
+        ...current,
+        {
+          ...acceptedRequest,
+          status: 'accepted'
+        }
+      ]);
+
+    }
+
+
+    notify('Connection accepted.');
+
+  }
+
+
+  async function decline(requestId) {
+
+    const {
+      error
+    } = await supabase
+      .from('friend_requests')
+      .update({
+        status: 'declined'
+      })
+      .eq('id', requestId);
+
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+
+    setRequests(current =>
+      current.filter(request =>
+        request.id !== requestId
+      )
+    );
+
+
+    notify('Connection request declined.');
+
   }
 
 
@@ -1335,6 +1502,7 @@ function Friends({
       action={
         <div className="search-box">
           <Search size={16} />
+
           <input
             placeholder="Find a student…"
             value={q}
@@ -1346,93 +1514,237 @@ function Friends({
       }
     >
 
+
       {requests.length > 0 && (
 
-        <div className="card request-box">
+        <section>
 
-          <b>
-            Connection requests
-          </b>
+          <div className="section-heading">
 
-          {requests.map(request => (
+            <h3>
+              Connection requests
+            </h3>
 
-            <div
-              className="request"
-              key={request.id}
-            >
+          </div>
 
-              <span>
-                Someone wants to connect with you.
-              </span>
 
-              <button
-                className="btn primary"
-                onClick={() =>
-                  accept(request.id)
-                }
-              >
-                Accept
-              </button>
+          <div className="people-grid">
 
-            </div>
+            {requests.map(request => {
 
-          ))}
+              const sender =
+                incomingProfiles.find(person =>
+                  person.id === request.sender_id
+                );
 
-        </div>
+
+              return (
+
+                <div
+                  className="card person"
+                  key={request.id}
+                >
+
+                  {sender && (
+
+                    <Avatar
+                      profile={sender}
+                      size="lg"
+                    />
+
+                  )}
+
+
+                  <h3>
+                    {sender
+                      ? `${sender.name || ''} ${sender.surname || ''}`
+                      : 'Student'}
+                  </h3>
+
+
+                  <p>
+
+                    {sender?.degree ||
+                      'Student'}
+
+                    {sender?.university
+                      ? ` · ${sender.university}`
+                      : ''}
+
+                  </p>
+
+
+                  <div className="two-col">
+
+                    <button
+                      className="btn primary"
+                      onClick={() =>
+                        accept(request.id)
+                      }
+                    >
+                      Accept
+                    </button>
+
+
+                    <button
+                      className="btn subtle"
+                      onClick={() =>
+                        decline(request.id)
+                      }
+                    >
+                      Decline
+                    </button>
+
+                  </div>
+
+                </div>
+
+              );
+
+            })}
+
+          </div>
+
+        </section>
 
       )}
 
 
-      {loading ? (
+      {connectionProfiles.length > 0 && (
 
-        <div className="empty">
-          Loading students…
-        </div>
+        <section>
 
-      ) : (
+          <div className="section-heading">
 
-        <div className="people-grid">
+            <h3>
+              My connections
+            </h3>
 
-          {filtered.map(person => (
+          </div>
 
-            <div
-              className="card person"
-              key={person.id}
-            >
 
-              <Avatar
-                profile={person}
-                size="lg"
-              />
+          <div className="people-grid">
 
-              <h3>
-                {person.name} {person.surname}
-              </h3>
+            {connectionProfiles.map(person => (
 
-              <p>
-                {person.degree || 'Student'}
-                {person.university
-                  ? ` · ${person.university}`
-                  : ''}
-              </p>
-
-              <button
-                className="btn subtle full"
-                onClick={() =>
-                  connect(person.id)
-                }
+              <div
+                className="card person"
+                key={person.id}
               >
-                <UserPlus size={16} />
-                Connect
-              </button>
 
-            </div>
+                <Avatar
+                  profile={person}
+                  size="lg"
+                />
 
-          ))}
 
-        </div>
+                <h3>
+                  {person.name} {person.surname}
+                </h3>
+
+
+                <p>
+
+                  {person.degree ||
+                    'Student'}
+
+                  {person.university
+                    ? ` · ${person.university}`
+                    : ''}
+
+                </p>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        </section>
 
       )}
+
+
+      <section>
+
+        <div className="section-heading">
+
+          <h3>
+            People you may know
+          </h3>
+
+        </div>
+
+
+        {loading ? (
+
+          <div className="empty">
+            Loading students…
+          </div>
+
+        ) : filteredPeople.length === 0 ? (
+
+          <div className="empty">
+            No students found.
+          </div>
+
+        ) : (
+
+          <div className="people-grid">
+
+            {filteredPeople.map(person => (
+
+              <div
+                className="card person"
+                key={person.id}
+              >
+
+                <Avatar
+                  profile={person}
+                  size="lg"
+                />
+
+
+                <h3>
+                  {person.name} {person.surname}
+                </h3>
+
+
+                <p>
+
+                  {person.degree ||
+                    'Student'}
+
+                  {person.university
+                    ? ` · ${person.university}`
+                    : ''}
+
+                </p>
+
+
+                <button
+                  className="btn subtle full"
+                  onClick={() =>
+                    connect(person.id)
+                  }
+                >
+
+                  <UserPlus size={16} />
+
+                  Connect
+
+                </button>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        )}
+
+      </section>
+
 
     </Page>
   );
