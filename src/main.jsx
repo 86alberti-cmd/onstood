@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V21.2-ADMIN-ACTIONS';
+const ONSTOOD_BUILD = 'V27-SIMPLE-DELETE-CONFIRM';
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
 
 
@@ -376,6 +376,7 @@ function Auth({ onReady }) {
     surname: '',
     email: '',
     password: '',
+    confirm_password: '',
     university: '',
     degree: '',
     year: '',
@@ -475,6 +476,20 @@ function Auth({ onReady }) {
       ========================= 
       */
 
+      if (form.password.length < 8) {
+        setMessage(
+          'Password must be at least 8 characters.'
+        );
+        return;
+      }
+
+      if (form.password !== form.confirm_password) {
+        setMessage(
+          'Passwords do not match.'
+        );
+        return;
+      }
+
       const {
         data,
         error
@@ -486,7 +501,7 @@ function Auth({ onReady }) {
         options: {
 
           emailRedirectTo:
-            window.location.origin,
+            `${window.location.origin}/confirm-signup`,
 
           data: {
             account_type:
@@ -623,7 +638,7 @@ function Auth({ onReady }) {
         form.email,
         {
           redirectTo:
-            window.location.origin
+            `${window.location.origin}/reset-password`
         }
       );
 
@@ -635,7 +650,7 @@ function Auth({ onReady }) {
     } else {
 
       setMessage(
-        'Password reset email sent. Check your inbox.'
+        'If an ONSTOOD account exists for this email, a secure reset link has been sent. Check your inbox and spam folder.'
       );
 
     }
@@ -643,6 +658,105 @@ function Auth({ onReady }) {
 
     setBusy(false);
 
+  }
+
+
+  if (mode === 'forgot') {
+
+    return (
+      <div className="auth-shell">
+
+        <div className="auth-left">
+          <div className="brand huge">
+            ONSTOOD<span>.</span>
+          </div>
+
+          <h1>
+            Recover your
+            <br />
+            account.
+          </h1>
+
+          <p>
+            Enter the email address connected to your ONSTOOD account.
+            We will send you a secure link to create a new password.
+          </p>
+
+          <div className="auth-pills">
+            <span>Secure</span>
+            <span>Private</span>
+            <span>Simple</span>
+          </div>
+        </div>
+
+        <div className="auth-card">
+          <div className="brand">
+            ONSTOOD<span>.</span>
+          </div>
+
+          <h2 style={{ marginBottom: 6 }}>
+            Forgot your password?
+          </h2>
+
+          <p className="muted">
+            Enter your email and we will send you a password reset link.
+          </p>
+
+          <form
+            onSubmit={async event => {
+              event.preventDefault();
+              await forgotPassword();
+            }}
+          >
+            <input
+              type="email"
+              placeholder="Email address"
+              value={form.email}
+              onChange={event =>
+                setField('email', event.target.value)
+              }
+              autoComplete="email"
+              required
+              autoFocus
+            />
+
+            {message && (
+              <div className="message">
+                {message}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="btn primary full"
+              disabled={busy}
+            >
+              {busy
+                ? 'Sending reset link…'
+                : 'Send reset link'}
+            </button>
+
+            <button
+              type="button"
+              className="btn subtle full"
+              onClick={() => {
+                setMode('login');
+                setMessage('');
+              }}
+              disabled={busy}
+              style={{ marginTop: 10 }}
+            >
+              Back to sign in
+            </button>
+          </form>
+
+          <small className="muted">
+            For your privacy, ONSTOOD does not display your old password.
+          </small>
+        </div>
+
+      </div>
+    );
   }
 
 
@@ -887,8 +1001,12 @@ function Auth({ onReady }) {
 
           <input
             type="password"
-            placeholder="Password"
-            minLength="6"
+            placeholder={
+              mode === 'register'
+                ? 'Password · minimum 8 characters'
+                : 'Password'
+            }
+            minLength={mode === 'register' ? 8 : 1}
             value={form.password}
             onChange={e =>
               setField(
@@ -898,6 +1016,25 @@ function Auth({ onReady }) {
             }
             required
           />
+
+
+          {mode === 'register' && (
+
+            <input
+              type="password"
+              placeholder="Confirm password"
+              minLength="8"
+              value={form.confirm_password}
+              onChange={e =>
+                setField(
+                  'confirm_password',
+                  e.target.value
+                )
+              }
+              required
+            />
+
+          )}
 
 
           {/* EXTRA REGISTER DATA */}
@@ -1094,7 +1231,10 @@ function Auth({ onReady }) {
             <button
               type="button"
               className="muted"
-              onClick={forgotPassword}
+              onClick={() => {
+                setMode('forgot');
+                setMessage('');
+              }}
               disabled={busy}
             >
               Forgot password?
@@ -1139,10 +1279,10 @@ function ResetPassword({ onDone }) {
     setMessage('');
 
 
-    if (password.length < 6) {
+    if (password.length < 8) {
 
       setMessage(
-        'Password must be at least 6 characters.'
+        'Password must be at least 8 characters.'
       );
 
       return;
@@ -1183,67 +1323,9 @@ function ResetPassword({ onDone }) {
     setSuccess(true);
     setBusy(false);
 
-  }
-
-
-  async function continueToLogin() {
-
-    await supabase.auth.signOut();
-
-    onDone();
-
-  }
-
-
-  if (success) {
-
-    return (
-
-      <div className="auth-shell">
-
-        <div className="auth-left">
-
-          <div className="brand huge">
-            ONSTOOD<span>.</span>
-          </div>
-
-          <h1>
-            Password updated.
-            <br />
-            You're back in control.
-          </h1>
-
-          <p>
-            Your ONSTOOD password has been changed
-            successfully.
-          </p>
-
-        </div>
-
-
-        <div className="auth-card">
-
-          <div className="brand">
-            ONSTOOD<span>.</span>
-          </div>
-
-          <div className="message">
-            Password updated successfully.
-          </div>
-
-          <button
-            type="button"
-            className="btn primary full"
-            onClick={continueToLogin}
-          >
-            Continue to sign in
-          </button>
-
-        </div>
-
-      </div>
-
-    );
+    // The password recovery link already created an authenticated
+    // recovery session. Keep it and enter ONSTOOD immediately.
+    await onDone();
 
   }
 
@@ -1296,7 +1378,7 @@ function ResetPassword({ onDone }) {
           <input
             type="password"
             placeholder="New password"
-            minLength="6"
+            minLength="8"
             value={password}
             onChange={e =>
               setPassword(e.target.value)
@@ -1308,7 +1390,7 @@ function ResetPassword({ onDone }) {
           <input
             type="password"
             placeholder="Confirm new password"
-            minLength="6"
+            minLength="8"
             value={confirmPassword}
             onChange={e =>
               setConfirmPassword(e.target.value)
@@ -16943,8 +17025,8 @@ function Profile({
 
       const payload = {
 
-        name: form.name || '',
-        surname: form.surname || '',
+        name: profile.name || '',
+        surname: profile.surname || '',
         university:
           isEmployer
             ? ''
@@ -17169,14 +17251,15 @@ function Profile({
             First name
 
             <input
-              value={form.name || ''}
-              onChange={e =>
-                updateField(
-                  'name',
-                  e.target.value
-                )
-              }
+              value={profile.name || ''}
+              readOnly
+              disabled
+              title="First name is fixed after account creation."
             />
+
+            <small className="muted">
+              Fixed after account creation.
+            </small>
           </label>
 
 
@@ -17184,14 +17267,15 @@ function Profile({
             Last name
 
             <input
-              value={form.surname || ''}
-              onChange={e =>
-                updateField(
-                  'surname',
-                  e.target.value
-                )
-              }
+              value={profile.surname || ''}
+              readOnly
+              disabled
+              title="Last name is fixed after account creation."
             />
+
+            <small className="muted">
+              Fixed after account creation.
+            </small>
           </label>
 
 
@@ -19694,6 +19778,9 @@ function SettingsPage({
   const [deleteBusy, setDeleteBusy] =
     useState(false);
 
+  const [deleteNeedsPassword, setDeleteNeedsPassword] =
+    useState(true);
+
 
   const [feedbackForm, setFeedbackForm] =
     useState({
@@ -19745,7 +19832,33 @@ function SettingsPage({
       setLoading(false);
     }
 
+    async function loadDeleteAuthMode() {
+
+      const {
+        data
+      } = await supabase.auth.getUser();
+
+      if (!active) {
+        return;
+      }
+
+      const identities =
+        data?.user?.identities || [];
+
+      const hasEmailPasswordIdentity =
+        identities.some(
+          identity =>
+            identity?.provider === 'email'
+        );
+
+      setDeleteNeedsPassword(
+        hasEmailPasswordIdentity
+      );
+
+    }
+
     loadSettings();
+    loadDeleteAuthMode();
 
     return () => {
       active = false;
@@ -19871,15 +19984,9 @@ function SettingsPage({
   async function deleteAccount() {
 
     if (
-      deleteText !== 'DELETE'
+      deleteNeedsPassword &&
+      !deletePassword
     ) {
-      notify(
-        'Type DELETE exactly to confirm.'
-      );
-      return;
-    }
-
-    if (!deletePassword) {
       notify(
         'Enter your current password.'
       );
@@ -19900,7 +20007,7 @@ function SettingsPage({
             password:
               deletePassword,
             confirmation:
-              deleteText
+              'DELETE'
           }
         }
       );
@@ -21000,36 +21107,27 @@ function SettingsPage({
             </h2>
 
             <p className="muted">
-              Confirm your current password
-              and type <b>DELETE</b>.
+              {deleteNeedsPassword
+                ? 'Enter your current password to permanently delete your account.'
+                : 'Confirm below to permanently remove this account. Your active Google session is used for verification.'}
             </p>
 
-            <input
-              name="delete-account-password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="Current password"
-              value={deletePassword}
-              onChange={event =>
-                setDeletePassword(
-                  event.target.value
-                )
-              }
-            />
+            {deleteNeedsPassword && (
 
-            <input
-              name="delete-account-confirmation"
-              placeholder="Type DELETE"
-              value={deleteText}
-              onChange={event =>
-                setDeleteText(
-                  event.target.value
-                )
-              }
-              style={{
-                marginTop: 10
-              }}
-            />
+              <input
+                name="delete-account-password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="Current password"
+                value={deletePassword}
+                onChange={event =>
+                  setDeletePassword(
+                    event.target.value
+                  )
+                }
+              />
+
+            )}
 
             <div
               style={{
@@ -21056,9 +21154,10 @@ function SettingsPage({
                 className="btn primary"
                 disabled={
                   deleteBusy ||
-                  deleteText !==
-                    'DELETE' ||
-                  !deletePassword
+                  (
+                    deleteNeedsPassword &&
+                    !deletePassword
+                  )
                 }
                 onClick={deleteAccount}
               >
@@ -21484,7 +21583,38 @@ function Root() {
     useState(true);
 
   const [recoveryMode, setRecoveryMode] =
-    useState(false);
+    useState(() => {
+      try {
+        const url = new URL(window.location.href);
+
+        return (
+          url.pathname === '/reset-password' ||
+          url.searchParams.get('onstood_recovery') === '1' ||
+          url.searchParams.get('type') === 'recovery' ||
+          window.location.hash.includes('type=recovery')
+        );
+      } catch {
+        return false;
+      }
+    });
+
+  const [recoveryError, setRecoveryError] =
+    useState('');
+
+  const [confirmationMode, setConfirmationMode] =
+    useState(() => {
+      try {
+        return new URL(window.location.href).pathname === '/confirm-signup';
+      } catch {
+        return false;
+      }
+    });
+
+  const [confirmationStatus, setConfirmationStatus] =
+    useState('checking');
+
+  const [confirmationError, setConfirmationError] =
+    useState('');
 
   const [needsAccountType, setNeedsAccountType] =
     useState(false);
@@ -21551,6 +21681,140 @@ function Root() {
 
 
     async function start() {
+
+      try {
+
+        const url =
+          new URL(window.location.href);
+
+        const tokenHash =
+          url.searchParams.get('token_hash');
+
+        const emailType =
+          url.searchParams.get('type');
+
+        const authError =
+          url.searchParams.get('error_description') ||
+          url.searchParams.get('error');
+
+        if (authError) {
+
+          setRecoveryError(
+            decodeURIComponent(
+              String(authError).replace(/\+/g, ' ')
+            )
+          );
+
+        }
+
+        if (
+          url.pathname === '/reset-password' &&
+          tokenHash &&
+          emailType === 'recovery'
+        ) {
+
+          const {
+            error: verifyError
+          } = await supabase.auth.verifyOtp({
+            token_hash: tokenHash,
+            type: 'recovery'
+          });
+
+          if (verifyError) {
+
+            setRecoveryError(
+              verifyError.message ||
+              'This password reset link is invalid or has expired.'
+            );
+
+          } else {
+
+            setRecoveryMode(true);
+            setRecoveryError('');
+
+            window.history.replaceState(
+              {},
+              document.title,
+              '/reset-password'
+            );
+
+          }
+
+        }
+
+        if (url.pathname === '/confirm-signup') {
+
+          setConfirmationMode(true);
+          setConfirmationStatus('checking');
+          setConfirmationError('');
+
+          if (!tokenHash || emailType !== 'email') {
+
+            setConfirmationStatus('error');
+            setConfirmationError(
+              'This confirmation link is incomplete or invalid.'
+            );
+
+          } else {
+
+            const {
+              data: confirmationData,
+              error: confirmationVerifyError
+            } = await supabase.auth.verifyOtp({
+              token_hash: tokenHash,
+              type: 'email'
+            });
+
+            if (confirmationVerifyError) {
+
+              setConfirmationStatus('error');
+              setConfirmationError(
+                confirmationVerifyError.message ||
+                'This confirmation link is invalid or has expired.'
+              );
+
+            } else {
+
+              const confirmedSession =
+                confirmationData?.session || null;
+
+              setConfirmationStatus('success');
+              setConfirmationError('');
+
+              if (confirmedSession) {
+
+                setSession(confirmedSession);
+
+                await checkAccountType(
+                  confirmedSession
+                );
+
+              }
+
+              // Seamless activation:
+              // confirmed users go straight into ONSTOOD.
+              window.history.replaceState(
+                {},
+                document.title,
+                '/'
+              );
+
+              setConfirmationMode(false);
+
+            }
+
+          }
+
+        }
+
+      } catch (error) {
+
+        console.error(
+          'Recovery URL handling error:',
+          error
+        );
+
+      }
 
       const {
         data,
@@ -21652,12 +21916,217 @@ function Root() {
   }
 
 
+  if (confirmationMode) {
+
+    return (
+      <div className="auth-shell">
+
+        <div className="auth-left">
+
+          <div className="brand huge">
+            ONSTOOD<span>.</span>
+          </div>
+
+          <h1>
+            {confirmationStatus === 'success'
+              ? 'Identity confirmed.'
+              : confirmationStatus === 'error'
+                ? 'Activation interrupted.'
+                : 'Initializing account.'}
+          </h1>
+
+          <p>
+            {confirmationStatus === 'success'
+              ? 'Your email is verified and your ONSTOOD account is active.'
+              : confirmationStatus === 'error'
+                ? 'The activation link could not be verified.'
+                : 'Securely verifying your ONSTOOD activation token…'}
+          </p>
+
+          <div className="auth-pills">
+            <span>Secure</span>
+            <span>Email verified</span>
+            <span>ONSTOOD</span>
+          </div>
+
+        </div>
+
+        <div className="auth-card">
+
+          <div className="brand">
+            ONSTOOD<span>.</span>
+          </div>
+
+          {confirmationStatus === 'checking' && (
+            <>
+              <h2>Activating your account…</h2>
+              <div className="message">
+                Verifying your email securely. This should only take a moment.
+              </div>
+            </>
+          )}
+
+          {confirmationStatus === 'success' && (
+            <>
+              <h2>◈ ACCOUNT ACTIVATED</h2>
+
+              <div className="message success">
+                Your email has been confirmed successfully.
+                Welcome to ONSTOOD.
+              </div>
+
+              <button
+                className="btn primary full"
+                onClick={() => {
+                  window.history.replaceState(
+                    {},
+                    document.title,
+                    '/'
+                  );
+                  setConfirmationMode(false);
+                }}
+              >
+                Continue to sign in
+              </button>
+            </>
+          )}
+
+          {confirmationStatus === 'error' && (
+            <>
+              <h2>Activation link unavailable</h2>
+
+              <div className="message">
+                {confirmationError}
+              </div>
+
+              <button
+                className="btn primary full"
+                onClick={() => {
+                  window.history.replaceState(
+                    {},
+                    document.title,
+                    '/'
+                  );
+                  setConfirmationMode(false);
+                  setConfirmationStatus('checking');
+                  setConfirmationError('');
+                }}
+              >
+                Back to sign in
+              </button>
+            </>
+          )}
+
+          <div
+            className="muted"
+            style={{
+              marginTop: 14,
+              fontSize: 12
+            }}
+          >
+            Secure account activation powered by ONSTOOD Auth.
+          </div>
+
+        </div>
+
+      </div>
+    );
+
+  }
+
+
   if (recoveryMode) {
+
+    if (recoveryError) {
+
+      return (
+        <div className="auth-shell">
+
+          <div className="auth-left">
+
+            <div className="brand huge">
+              ONSTOOD<span>.</span>
+            </div>
+
+            <h1>
+              Reset link
+              <br />
+              unavailable.
+            </h1>
+
+            <p>
+              This password reset link is invalid, expired,
+              or has already been used.
+            </p>
+
+          </div>
+
+          <div className="auth-card">
+
+            <div className="brand">
+              ONSTOOD<span>.</span>
+            </div>
+
+            <h2>
+              Request a new password reset link
+            </h2>
+
+            <div className="message">
+              {recoveryError}
+            </div>
+
+            <button
+              className="btn primary full"
+              onClick={() => {
+                window.history.replaceState(
+                  {},
+                  document.title,
+                  '/'
+                );
+                setRecoveryError('');
+                setRecoveryMode(false);
+              }}
+            >
+              Back to sign in
+            </button>
+
+          </div>
+
+        </div>
+      );
+
+    }
 
     return (
       <ResetPassword
-        onDone={() => {
+        onDone={async () => {
+
+          const {
+            data
+          } = await supabase.auth.getSession();
+
+          const activeSession =
+            data?.session || null;
+
+          if (activeSession) {
+
+            setSession(activeSession);
+
+            await checkAccountType(
+              activeSession
+            );
+
+          }
+
+          window.history.replaceState(
+            {},
+            document.title,
+            '/'
+          );
+
+          setRecoveryError('');
           setRecoveryMode(false);
+
         }}
       />
     );
