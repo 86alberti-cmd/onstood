@@ -38,7 +38,9 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V27-SIMPLE-DELETE-CONFIRM';
+const ONSTOOD_BUILD = 'V29.11-FLOATING-ONLINE-CHAT';
+console.log('%cOopss, only for developers!', 'font-size:28px;font-weight:900;color:#6558ff;');
+console.log('%cThis area is intended for ONSTOOD developers. Never paste code here that someone sent you — it could compromise your ONSTOOD account.', 'font-size:13px;font-weight:600;color:#64748b;');
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
 
 
@@ -1544,6 +1546,13 @@ class SectionErrorBoundary extends React.Component {
 function App({ session }) {
 
   const [section, setSection] = useState(getInitialSection);
+  const [requestedProfileId, setRequestedProfileId] = useState(null);
+  function openMemberProfile(userId) {
+    if (!userId || userId === profile?.id) { setRequestedProfileId(null); setSection('profile'); return; }
+    setRequestedProfileId(userId);
+    setSection('friends');
+  }
+
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
@@ -3214,6 +3223,7 @@ function App({ session }) {
               overviewLoading={
                 overviewLoading
               }
+              onOpenProfile={openMemberProfile}
             />
           )}
 
@@ -3222,6 +3232,7 @@ function App({ session }) {
               profile={profile}
               notify={notify}
               onlineUserIds={onlineUserIds}
+              requestedProfileId={requestedProfileId}
               onOpenChat={personId => {
                 setMiniChatConversationId(null);
                 setMiniChatUserId(
@@ -3336,15 +3347,16 @@ function App({ session }) {
           {section === 'settings' && (
             <SettingsPage
               profile={profile}
+              setProfile={setProfile}
               notify={notify}
             />
           )}
 
           {section === 'profile' && (
-            <Profile
+            <MyProfile
               profile={profile}
-              setProfile={setProfile}
               notify={notify}
+              onEditProfile={() => setSection('settings')}
             />
           )}
 
@@ -3357,17 +3369,6 @@ function App({ session }) {
 
         {profile.account_type !== 'employer' && (
         <aside className="rightbar">
-
-          <OnlineConnections
-            profile={profile}
-            onlineUserIds={onlineUserIds}
-            notify={notify}
-            onOpenChat={personId => {
-              setMiniChatConversationId(null);
-              setMiniChatUserId(personId);
-            }}
-          />
-
 
           <div className="card ai-card">
 
@@ -3396,52 +3397,6 @@ function App({ session }) {
           </div>
 
 
-          <div className="card">
-
-            <div className="card-head">
-              <h3>Quick overview</h3>
-              <Activity size={17} />
-            </div>
-
-            <div className="metric">
-              <span>Open tasks</span>
-              <b>
-                {overviewLoading
-                  ? '…'
-                  : overview.tasks}
-              </b>
-            </div>
-
-            <div className="metric">
-              <span>Upcoming</span>
-              <b>
-                {overviewLoading
-                  ? '…'
-                  : overview.upcoming}
-              </b>
-            </div>
-
-            <div className="metric">
-              <span>Connections</span>
-              <b>
-                {overviewLoading
-                  ? '…'
-                  : overview.connections}
-              </b>
-            </div>
-
-            <div className="metric">
-              <span>Documents</span>
-              <b>
-                {overviewLoading
-                  ? '…'
-                  : overview.documents}
-              </b>
-            </div>
-
-          </div>
-
-
           <div className="card tip">
             <b>ONSTOOD idea</b>
             <p>
@@ -3454,6 +3409,31 @@ function App({ session }) {
         )}
 
       </div>
+
+      {profile.account_type !== 'employer' && (
+        <div
+          style={{
+            position: 'fixed',
+            right: 18,
+            bottom: (miniChatUserId || miniChatConversationId)
+              ? 'calc(min(600px, calc(100vh - 36px)) + 28px)'
+              : 18,
+            width: 'min(260px, calc(100vw - 24px))',
+            zIndex: 10040,
+            transition: 'bottom 180ms ease'
+          }}
+        >
+          <OnlineConnections
+            profile={profile}
+            onlineUserIds={onlineUserIds}
+            notify={notify}
+            onOpenChat={personId => {
+              setMiniChatConversationId(null);
+              setMiniChatUserId(personId);
+            }}
+          />
+        </div>
+      )}
 
 
       {toast && (
@@ -3476,7 +3456,8 @@ function HomePage({
   go,
   notify,
   overview,
-  overviewLoading
+  overviewLoading,
+  onOpenProfile
 }) {
 
   const [posts, setPosts] = useState([]);
@@ -4090,6 +4071,7 @@ function HomePage({
               ? '…'
               : overview.connections
           }
+          onClick={() => go('friends')}
         />
 
         <Stat
@@ -4099,6 +4081,7 @@ function HomePage({
               ? '…'
               : overview.upcoming
           }
+          onClick={() => go('calendar')}
         />
 
         <Stat
@@ -4108,6 +4091,7 @@ function HomePage({
               ? '…'
               : overview.tasks
           }
+          onClick={() => go('tasks')}
         />
 
         <Stat
@@ -4117,6 +4101,7 @@ function HomePage({
               ? '…'
               : overview.documents
           }
+          onClick={() => go('documents')}
         />
       </div>
 
@@ -4218,6 +4203,7 @@ function HomePage({
             onDelete={() =>
               deletePost(post.id)
             }
+            onOpenProfile={() => onOpenProfile?.(post.user_id)}
           />
         ))
       )}
@@ -4451,8 +4437,28 @@ function HomePage({
 
 function Stat({
   label,
-  value
+  value,
+  onClick
 }) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        className="stat"
+        onClick={onClick}
+        title={`Open ${label}`}
+        style={{
+          textAlign: 'left',
+          cursor: 'pointer',
+          width: '100%'
+        }}
+      >
+        <span>{value}</span>
+        <small>{label}</small>
+      </button>
+    );
+  }
+
   return (
     <div className="stat">
       <span>{value}</span>
@@ -4475,7 +4481,8 @@ function Post({
   onComment,
   onShare,
   onPostOffice,
-  onDelete
+  onDelete,
+  onOpenProfile
 }) {
 
   const author =
@@ -4485,14 +4492,17 @@ function Post({
     <article className="card post-card">
 
       <div className="post-author">
-        <Avatar profile={author} />
+        <button type="button" onClick={onOpenProfile} title="Open profile"
+          style={{border:0,background:'transparent',padding:0,cursor:'pointer',display:'flex'}}>
+          <Avatar profile={author} />
+        </button>
 
         <div
           style={{
             flex: 1
           }}
         >
-          <b>
+          <b onClick={onOpenProfile} style={{cursor:'pointer'}}>
             {author.name || 'Student'}{' '}
             {author.surname || ''}
           </b>
@@ -4938,6 +4948,62 @@ function OnlineConnections({
    NETWORK
    ========================================================= */
 
+
+function ProfileAlbumsView({ person }) {
+  const [albums,setAlbums]=useState([]);
+  const [photosByAlbum,setPhotosByAlbum]=useState({});
+  const [largePhoto,setLargePhoto]=useState(null);
+
+  useEffect(()=>{
+    let cancelled=false;
+    async function load(){
+      if(!person?.id) return;
+      const [{data:albumRows,error:albumError},{data:photoRows,error:photoError}]=await Promise.all([
+        supabase.from('photo_albums').select('*').eq('owner_id',person.id).order('created_at',{ascending:false}),
+        supabase.from('photos').select('*').eq('owner_id',person.id).order('created_at',{ascending:false})
+      ]);
+      if(cancelled) return;
+      if(albumError){ console.error('Album read error:',albumError); setAlbums([]); return; }
+      if(photoError){ console.error('Photo read error:',photoError); }
+      const visibleAlbums=albumRows||[];
+      const signed=await Promise.all((photoRows||[]).map(async photo=>{
+        const {data,error}=await supabase.storage.from('profile-photos').createSignedUrl(photo.storage_path,3600);
+        if(error) console.error('Photo URL error:',error);
+        return {...photo,signed_url:data?.signedUrl||null};
+      }));
+      if(cancelled) return;
+      const grouped={}; signed.forEach(p=>{(grouped[p.album_id] ||= []).push(p)});
+      setAlbums(visibleAlbums); setPhotosByAlbum(grouped);
+    }
+    load();
+    return()=>{cancelled=true};
+  },[person?.id]);
+
+  if(!albums.length) return null;
+  return <div className="card" style={{marginTop:18}}>
+    <div className="card-head"><div><h3>Photos & albums</h3><small className="muted">Albums visible to you according to privacy.</small></div><FolderOpen size={18}/></div>
+    <div style={{display:'grid',gap:14}}>
+      {albums.map(a=><div key={a.id} style={{paddingTop:4}}>
+        <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'baseline',marginBottom:8}}>
+          <b>{a.title}</b><small className="muted">{(photosByAlbum[a.id]||[]).length} photo{(photosByAlbum[a.id]||[]).length===1?'':'s'}</small>
+        </div>
+        {(photosByAlbum[a.id]||[]).length===0 ? <div className="muted">No visible photos in this album.</div> :
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8}}>
+            {(photosByAlbum[a.id]||[]).map(photo=><button key={photo.id} type="button" onClick={()=>setLargePhoto(photo)}
+              style={{border:0,padding:0,cursor:'zoom-in',aspectRatio:'1/1',overflow:'hidden',borderRadius:12,background:'#eef1f7'}}>
+              {photo.signed_url&&<img src={photo.signed_url} alt={a.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>}
+            </button>)}
+          </div>}
+      </div>)}
+    </div>
+    {largePhoto?.signed_url&&<div role="dialog" aria-modal="true" onClick={()=>setLargePhoto(null)}
+      style={{position:'fixed',inset:0,zIndex:12000,background:'rgba(7,10,20,.88)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,cursor:'zoom-out'}}>
+      <img src={largePhoto.signed_url} alt="Photo" onClick={e=>e.stopPropagation()}
+        style={{maxWidth:'94vw',maxHeight:'90vh',objectFit:'contain',borderRadius:14,boxShadow:'0 25px 80px rgba(0,0,0,.45)'}}/>
+      <button className="icon-btn" onClick={()=>setLargePhoto(null)} style={{position:'fixed',right:24,top:24,background:'white'}}><X size={20}/></button>
+    </div>}
+  </div>;
+}
 
 function ProfileTimeline({
   viewer,
@@ -5493,7 +5559,8 @@ function Friends({
   profile,
   notify,
   onOpenChat,
-  onlineUserIds = []
+  onlineUserIds = [],
+  requestedProfileId = null
 }) {
 
   const [people, setPeople] =
@@ -5531,6 +5598,39 @@ function Friends({
 
   const [sendingPost, setSendingPost] =
     useState(false);
+
+  const [followingIds, setFollowingIds] = useState([]);
+
+  async function loadFollowingIds() {
+    const { data, error } = await supabase
+      .from('follows')
+      .select('following_id')
+      .eq('follower_id', profile.id);
+    if (error) { console.error('Follow load error:', error); return; }
+    setFollowingIds((data || []).map(row => row.following_id));
+  }
+
+  async function followPerson(personId) {
+    const { error } = await supabase
+      .from('follows')
+      .insert({ follower_id: profile.id, following_id: personId });
+    if (error) { notify(error.message); return; }
+    setFollowingIds(current => Array.from(new Set([...current, personId])));
+    notify('Following.');
+  }
+
+  async function unfollowPerson(personId) {
+    const { error } = await supabase
+      .from('follows')
+      .delete()
+      .eq('follower_id', profile.id)
+      .eq('following_id', personId);
+    if (error) { notify(error.message); return; }
+    setFollowingIds(current => current.filter(id => id !== personId));
+    notify('Unfollowed.');
+  }
+
+  useEffect(() => { loadFollowingIds(); }, [profile.id]);
 
 
   /* -------------------------------------------------------
@@ -5652,6 +5752,12 @@ function Friends({
   }, [profile.id]);
 
 
+
+  useEffect(() => {
+    if (!requestedProfileId || !people.length) return;
+    const found = people.find(person => person.id === requestedProfileId);
+    if (found) setSelectedPerson(found);
+  }, [requestedProfileId, people]);
 
   /* -------------------------------------------------------
      CONNECTION IDS
@@ -6244,9 +6350,21 @@ function Friends({
 
         <div
           style={{
-            marginTop: 20
+            marginTop: 20,
+            display: 'flex',
+            gap: 10,
+            flexWrap: 'wrap',
+            alignItems: 'center'
           }}
         >
+
+          <button
+            type="button"
+            className={followingIds.includes(person.id) ? 'btn subtle' : 'btn primary'}
+            onClick={() => followingIds.includes(person.id) ? unfollowPerson(person.id) : followPerson(person.id)}
+          >
+            {followingIds.includes(person.id) ? 'Following ✓' : 'Follow'}
+          </button>
 
           {status === 'none' && (
 
@@ -6418,6 +6536,8 @@ function Friends({
 
         </div>
 
+
+        <ProfileAlbumsView person={person} />
 
         <ProfileTimeline
           viewer={profile}
@@ -8004,6 +8124,7 @@ function PostOffice({
 
   const [messages, setMessages] = useState([]);
   const messagesEndRef = useRef(null);
+  const messageInputRef = useRef(null);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -8070,6 +8191,11 @@ function PostOffice({
     selectedConversationId,
     loadingMessages
   ]);
+
+  useEffect(() => {
+    if (!selectedConversationId || loadingMessages || !isOtherOnline) return;
+    window.requestAnimationFrame(() => messageInputRef.current?.focus());
+  }, [selectedConversationId, loadingMessages, isOtherOnline]);
 
 
   useEffect(() => {
@@ -8715,6 +8841,7 @@ function PostOffice({
     }
 
     setSending(false);
+    window.requestAnimationFrame(() => messageInputRef.current?.focus());
   }
 
 
@@ -10148,6 +10275,7 @@ function PostOffice({
 
 
                 <input
+                  ref={messageInputRef}
                   placeholder={
                     !isOtherOnline
                       ? 'Offline — use Send a post from their profile'
@@ -10990,6 +11118,9 @@ function Documents({
   const [docs, setDocs] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [uploadVisibility, setUploadVisibility] = useState('');
+  const fileInputRef = useRef(null);
 
 
   useEffect(() => {
@@ -11080,40 +11211,50 @@ function Documents({
   }, [profile.id]);
 
 
-  async function upload(event) {
+  function chooseDocument(event) {
 
-    const input =
-      event.target;
-
-    const file =
-      input.files?.[0];
-
+    const input = event.target;
+    const file = input.files?.[0];
 
     if (!file) {
       return;
     }
 
-
-    const maxSize =
-      25 * 1024 * 1024;
-
+    const maxSize = 25 * 1024 * 1024;
 
     if (file.size > maxSize) {
-
-      notify(
-        'Document must be smaller than 25 MB.'
-      );
-
+      notify('Document must be smaller than 25 MB.');
       input.value = '';
       return;
     }
 
+    // Do not upload yet. The user must explicitly choose visibility first.
+    setPendingFile(file);
+    setUploadVisibility('');
+  }
+
+
+  function cancelPendingUpload() {
+    setPendingFile(null);
+    setUploadVisibility('');
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }
+
+
+  async function upload() {
+
+    const file = pendingFile;
+
+    if (!file || !uploadVisibility) {
+      return;
+    }
 
     setBusy(true);
 
-
     let uploadedPath = null;
-
 
     try {
 
@@ -11121,10 +11262,8 @@ function Documents({
         String(file.name || 'document')
           .replace(/[\\/]/g, '-');
 
-
       uploadedPath =
         `${profile.id}/${crypto.randomUUID()}-${safeName}`;
-
 
       const {
         error: uploadError
@@ -11143,11 +11282,9 @@ function Documents({
           }
         );
 
-
       if (uploadError) {
         throw uploadError;
       }
-
 
       const {
         data,
@@ -11155,36 +11292,28 @@ function Documents({
       } = await supabase
         .from('documents')
         .insert({
-          user_id:
-            profile.id,
-          file_name:
-            file.name || 'Document',
-          storage_path:
-            uploadedPath,
+          user_id: profile.id,
+          file_name: file.name || 'Document',
+          storage_path: uploadedPath,
           mime_type:
             file.type ||
             'application/octet-stream',
-          visibility:
-            'private'
+          visibility: uploadVisibility
         })
         .select()
         .single();
 
-
       if (dbError) {
         throw dbError;
       }
-
 
       setDocs(current => [
         data,
         ...current
       ].filter(Boolean));
 
-
-      notify(
-        'Document uploaded.'
-      );
+      notify('Document uploaded.');
+      cancelPendingUpload();
 
     } catch (error) {
 
@@ -11193,18 +11322,12 @@ function Documents({
         error
       );
 
-
       if (uploadedPath) {
-
         await supabase
           .storage
           .from('student-documents')
-          .remove([
-            uploadedPath
-          ]);
-
+          .remove([uploadedPath]);
       }
-
 
       notify(
         error?.message ||
@@ -11212,14 +11335,9 @@ function Documents({
       );
 
     } finally {
-
       setBusy(false);
-      input.value = '';
-
     }
-
   }
-
 
   async function openDocument(item) {
 
@@ -11301,7 +11419,7 @@ function Documents({
       ![
         'private',
         'connections',
-        'public'
+        'onstood_ai'
       ].includes(
         visibility
       )
@@ -11346,8 +11464,8 @@ function Documents({
 
 
     notify(
-      visibility === 'public'
-        ? 'Document is now public.'
+      visibility === 'onstood_ai'
+        ? 'Document is now available to your connections and ONSTOOD AI.'
         : visibility === 'connections'
           ? 'Document is now visible to connections.'
           : 'Document is private.'
@@ -11461,8 +11579,9 @@ function Documents({
 
 
           <input
+            ref={fileInputRef}
             type="file"
-            onChange={upload}
+            onChange={chooseDocument}
             hidden
             disabled={busy}
           />
@@ -11482,11 +11601,130 @@ function Documents({
 
         <p>
           Keep files private, share them with
-          connections, or publish selected
-          materials on your profile timeline.
+          connections, or make selected materials
+          available to your connections and ONSTOOD AI.
         </p>
 
       </div>
+
+
+      {pendingFile && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 3000,
+            background: 'rgba(15,23,42,0.48)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20
+          }}
+          onMouseDown={event => {
+            if (event.target === event.currentTarget && !busy) {
+              cancelPendingUpload();
+            }
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: 'min(520px, 100%)',
+              padding: 22,
+              boxShadow: '0 24px 70px rgba(15,23,42,0.28)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+              <div>
+                <small className="muted">DOCUMENT PRIVACY</small>
+                <h3 style={{ margin: '5px 0 6px' }}>Who can use this document?</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  Choose one option before upload. Nothing is uploaded until you confirm.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={cancelPendingUpload}
+                disabled={busy}
+                title="Cancel upload"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop: 18,
+                padding: '10px 12px',
+                borderRadius: 12,
+                background: '#f8fafc',
+                overflowWrap: 'anywhere'
+              }}
+            >
+              <FileText size={16} style={{ verticalAlign: 'middle', marginRight: 8 }} />
+              <b>{pendingFile.name}</b>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
+              {[
+                ['private', 'Private', 'Only you can access this document.'],
+                ['connections', 'Connections', 'Your accepted connections can access it.'],
+                ['onstood_ai', 'ONSTOOD AI', 'Your connections can access it, and ONSTOOD AI may use it as a knowledge source when relevant.']
+              ].map(([value, title, description]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setUploadVisibility(value)}
+                  disabled={busy}
+                  style={{
+                    border: uploadVisibility === value
+                      ? '2px solid #6558ff'
+                      : '1px solid #e2e8f0',
+                    background: uploadVisibility === value
+                      ? '#f5f3ff'
+                      : '#fff',
+                    borderRadius: 14,
+                    padding: '13px 14px',
+                    textAlign: 'left',
+                    cursor: busy ? 'default' : 'pointer'
+                  }}
+                >
+                  <b>{title}</b>
+                  <small className="muted" style={{ display: 'block', marginTop: 3 }}>
+                    {description}
+                  </small>
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={cancelPendingUpload}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                onClick={upload}
+                disabled={busy || !uploadVisibility}
+                style={{
+                  opacity: busy || !uploadVisibility ? 0.55 : 1,
+                  cursor: busy || !uploadVisibility ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <Upload size={16} />
+                {busy ? 'Uploading…' : 'Confirm & upload'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
 
       {loadingDocs ? (
@@ -11601,8 +11839,8 @@ function Documents({
                       Connections
                     </option>
 
-                    <option value="public">
-                      Public
+                    <option value="onstood_ai">
+                      ONSTOOD AI
                     </option>
                   </select>
                 </label>
@@ -16669,129 +16907,667 @@ function Career({
    AI
    ========================================================= */
 
+
+function SocialLayerPanel({ profile, viewingProfile, followingIds = [], onFollow, onUnfollow }) {
+  const target = viewingProfile || profile;
+  const own = target?.id === profile?.id;
+  const following = followingIds.includes(target?.id);
+  const [privacy, setPrivacy] = useState(target?.follow_privacy || 'everyone');
+  const [albums, setAlbums] = useState([]);
+  const [albumTitle, setAlbumTitle] = useState('');
+  const [albumVisibility, setAlbumVisibility] = useState('');
+
+  useEffect(() => {
+    if (!target?.id) return;
+    supabase.from('photo_albums').select('*').eq('owner_id', target.id).order('created_at',{ascending:false})
+      .then(({data}) => setAlbums(data || []));
+  }, [target?.id]);
+
+  async function saveFollowPrivacy(value) {
+    setPrivacy(value);
+    await supabase.from('profiles').update({ follow_privacy: value }).eq('id', profile.id);
+  }
+
+  async function createAlbum() {
+    if (!albumTitle.trim() || !albumVisibility) return;
+    const { data, error } = await supabase.from('photo_albums').insert({
+      owner_id: profile.id, title: albumTitle.trim(), visibility: albumVisibility
+    }).select().single();
+    if (!error && data) { setAlbums(v => [data,...v]); setAlbumTitle(''); setAlbumVisibility(''); }
+  }
+
+  return <div className="card" style={{marginTop:16}}>
+    <div className="card-head"><div><h3>Photos & social</h3><small className="muted">Albums, follow and profile timeline controls.</small></div><Users size={18}/></div>
+    {!own && <div className="row" style={{marginBottom:14}}>
+      <button className={following ? 'btn subtle' : 'btn primary'} onClick={() => following ? onUnfollow?.(target.id) : onFollow?.(target.id)}>
+        {following ? 'Following' : 'Follow'}
+      </button>
+    </div>}
+    {own && <div className="field" style={{marginBottom:14}}>
+      <label>Who can follow me?</label>
+      <select value={privacy} onChange={e=>saveFollowPrivacy(e.target.value)}>
+        <option value="everyone">Everyone</option>
+        <option value="friends_of_connections">Friends of connections</option>
+        <option value="connections">Connections only</option>
+      </select>
+    </div>}
+    {own && <div style={{padding:'12px 0',borderTop:'1px solid var(--line)'}}>
+      <b>Create photo album</b>
+      <div className="row" style={{gap:8,marginTop:8,flexWrap:'wrap'}}>
+        <input value={albumTitle} onChange={e=>setAlbumTitle(e.target.value)} placeholder="Album name" />
+        <select value={albumVisibility} onChange={e=>setAlbumVisibility(e.target.value)}>
+          <option value="">Choose privacy…</option>
+          <option value="only_me">Only me</option>
+          <option value="connections">Connections</option>
+          <option value="public">Public</option>
+        </select>
+        <button className="btn primary" disabled={!albumTitle.trim() || !albumVisibility} onClick={createAlbum}>Create album</button>
+      </div>
+      <small className="muted">No album can be created without an explicit privacy choice. Privacy can be changed later.</small>
+    </div>}
+    <div style={{paddingTop:12,borderTop:'1px solid var(--line)'}}>
+      <b>Albums</b>
+      {albums.length===0 ? <p className="muted">No albums yet.</p> :
+        <div className="chips" style={{marginTop:8}}>{albums.map(a=><span className="chip" key={a.id}>{a.title} · {a.visibility.replaceAll('_',' ')}</span>)}</div>}
+    </div>
+  </div>;
+}
+
 function AI({
   profile
 }) {
+  const [plan, setPlan] = useState({ plan_code: 'free', standard_limit: 5, advanced_limit: 0, monthly_price_eur: 0 });
+  const [aiInsights, setAiInsights] = useState([]);
+  const [insightBusy, setInsightBusy] = useState(false);
 
-  const [messages, setMessages] = useState([
-    {
-      role: 'ai',
-      text:
-        `Hi ${profile?.name || 'there'} — I’m ONSTOOD AI. ` +
-        `The interface is ready. Next we connect ` +
-        `the secure AI layer to your study context.`
-    }
-  ]);
-
-  const [text, setText] = useState('');
-
-
-  function send(event) {
-
-    event.preventDefault();
-
-    if (!text.trim()) return;
-
-    const question = text.trim();
-
-    setMessages(current => [
-      ...current,
-      {
-        role: 'me',
-        text: question
-      },
-      {
-        role: 'ai',
-        text:
-          'I’ve received your question. The production AI ' +
-          'layer will answer using your courses, calendar ' +
-          'and approved documents.'
-      }
-    ]);
-
-    setText('');
+  async function loadAiInsights() {
+    if (!profile?.id) return;
+    const { data } = await supabase
+      .from('ai_insights')
+      .select('id,title,teaser,action_prompt,status,advanced_required,created_at')
+      .eq('user_id', profile.id)
+      .in('status', ['new','seen'])
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (data) setAiInsights(data);
   }
 
+  async function dismissInsight(id) {
+    await supabase.from('ai_insights').update({ status: 'dismissed', acted_at: new Date().toISOString() }).eq('id', id);
+    setAiInsights(current => current.filter(x => x.id !== id));
+  }
+
+  async function acceptInsight(insight) {
+    if (!isPro) {
+      setMessages(current => [...current, {
+        id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced',
+        content: 'I found this proactively, but the full analysis uses Advanced AI and is available with ONSTOOD PRO.'
+      }]);
+      focusInput();
+      return;
+    }
+    if (advancedLeft <= 0) {
+      setMessages(current => [...current, {
+        id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced',
+        content: 'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.'
+      }]);
+      focusInput();
+      return;
+    }
+    await supabase.from('ai_insights').update({ status: 'accepted', acted_at: new Date().toISOString() }).eq('id', insight.id);
+    setAiInsights(current => current.filter(x => x.id !== insight.id));
+    setDraft(insight.action_prompt || `Analyze this study insight in depth: ${insight.title}. ${insight.teaser}`);
+    setMode('advanced');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  const inputRef = useRef(null);
+  const chatEndRef = useRef(null);
+
+  const [conversations, setConversations] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [usage, setUsage] = useState({ standard_count: 0, advanced_count: 0 });
+  const [historySearch, setHistorySearch] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+
+  const standardLeft = Math.max(0, Number(plan.standard_limit || 0) - Number(usage.standard_count || 0));
+  const advancedLeft = Math.max(0, Number(plan.advanced_limit || 0) - Number(usage.advanced_count || 0));
+  const isPro = plan.plan_code === 'pro';
+
+  function focusInput() {
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function scrollChat() {
+    window.requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }));
+  }
+
+  function renderAiText(value) {
+    const parts = String(value || '').split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index}>{part.slice(2, -2)}</strong>;
+      }
+      return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
+  }
+
+  async function loadUsage() {
+    const { data, error } = await supabase.rpc('get_ai_usage');
+    if (!error) {
+      const row = Array.isArray(data) ? data[0] : data;
+      setUsage({ standard_count: Number(row?.standard_used || 0), advanced_count: Number(row?.advanced_used || 0) });
+      setPlan({ plan_code: row?.plan_code || 'free', standard_limit: Number(row?.standard_limit ?? 5), advanced_limit: Number(row?.advanced_limit ?? 0), monthly_price_eur: Number(row?.monthly_price_eur ?? 0) });
+    }
+  }
+
+  async function loadConversations(preferredId = null) {
+    const { data, error } = await supabase
+      .from('ai_conversations')
+      .select('id,title,created_at,updated_at')
+      .eq('user_id', profile.id)
+      .order('updated_at', { ascending: false });
+
+    if (error) return;
+    const rows = data || [];
+    setConversations(rows);
+    const nextId = preferredId || conversationId || rows[0]?.id || null;
+    if (nextId) setConversationId(nextId);
+  }
+
+  async function loadMessages(id) {
+    if (!id) {
+      setMessages([]);
+      focusInput();
+      return;
+    }
+    const { data, error } = await supabase
+      .from('ai_messages')
+      .select('id,role,mode,content,created_at')
+      .eq('conversation_id', id)
+      .order('created_at', { ascending: true });
+    if (!error) setMessages(data || []);
+    focusInput();
+    scrollChat();
+  }
+
+  async function loadSuggestions() {
+    const [docsResult, eventsResult, postsResult] = await Promise.all([
+      supabase.from('documents').select('id,file_name,created_at').order('created_at', { ascending: false }).limit(6),
+      supabase.from('calendar_events').select('id,title,starts_at,location').gte('starts_at', new Date().toISOString()).order('starts_at', { ascending: true }).limit(6),
+      supabase.from('posts').select('id,body,created_at').order('created_at', { ascending: false }).limit(6)
+    ]);
+
+    const items = [];
+    (eventsResult.data || []).forEach(item => items.push({ kind: 'Upcoming', title: item.title, meta: item.location || new Date(item.starts_at).toLocaleString() }));
+    (docsResult.data || []).forEach(item => items.push({ kind: 'Document', title: item.file_name, meta: 'Available in ONSTOOD' }));
+    (postsResult.data || []).filter(item => item.body?.trim()).forEach(item => items.push({ kind: 'From your network', title: item.body.trim().slice(0, 90), meta: 'Shared on ONSTOOD' }));
+    setSuggestions(items.slice(0, 12));
+  }
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    loadUsage();
+    loadConversations();
+    loadSuggestions();
+    focusInput();
+  }, [profile?.id]);
+
+  useEffect(() => {
+    loadMessages(conversationId);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (suggestions.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setSuggestionIndex(current => (current + 1) % suggestions.length);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [suggestions.length]);
+
+  async function ensureConversation(question) {
+    if (conversationId) return conversationId;
+    const title = question.trim().slice(0, 52) || 'ONSTOOD AI';
+    const { data, error } = await supabase
+      .from('ai_conversations')
+      .insert({ user_id: profile.id, title })
+      .select('id')
+      .single();
+    if (error) throw error;
+    setConversationId(data.id);
+    await loadConversations(data.id);
+    return data.id;
+  }
+
+  async function refundQuestion(questionMode) {
+    try { await supabase.rpc('refund_ai_question', { p_mode: questionMode }); } catch {}
+  }
+
+  async function send(event, forcedMode = 'standard') {
+    event?.preventDefault?.();
+    const question = text.trim();
+    if (!question || busy) return;
+    const questionMode = forcedMode === 'advanced' ? 'advanced' : 'standard';
+
+    if (questionMode === 'standard' && standardLeft <= 0) {
+      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'standard', content: 'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.' }]);
+      focusInput(); return;
+    }
+    if (questionMode === 'advanced' && !isPro) {
+      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.' }]);
+      focusInput(); return;
+    }
+    if (questionMode === 'advanced' && advancedLeft <= 0) {
+      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.' }]);
+      focusInput(); return;
+    }
+
+    setBusy(true);
+    setText('');
+    let activeId = null;
+
+    try {
+      activeId = await ensureConversation(question);
+      const { data: quotaData, error: quotaError } = await supabase.rpc('consume_ai_question', { p_mode: questionMode });
+      const quota = Array.isArray(quotaData) ? quotaData[0] : quotaData;
+      if (quotaError || !quota?.allowed) throw new Error('Daily AI allowance reached. Refreshes at 12:00 PM.');
+
+      setUsage({ standard_count: Number(quota.standard_used || 0), advanced_count: Number(quota.advanced_used || 0) });
+      setPlan(current => ({ ...current, plan_code: quota.plan_code || current.plan_code, standard_limit: Number(quota.standard_limit ?? current.standard_limit), advanced_limit: Number(quota.advanced_limit ?? current.advanced_limit) }));
+
+      const userMessage = { conversation_id: activeId, user_id: profile.id, role: 'user', mode: questionMode, content: question };
+      const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,created_at').single();
+      if (saveUserError) throw saveUserError;
+      setMessages(current => [...current, savedUser]);
+      scrollChat();
+
+      const { data, error } = await supabase.functions.invoke('onstood-ai', { body: { message: question, mode: questionMode } });
+      if (error || !data?.answer) {
+        await refundQuestion(questionMode);
+        await loadUsage();
+        throw new Error(data?.error || error?.message || 'ONSTOOD AI is temporarily unavailable. Your AI question was refunded.');
+      }
+
+      const { data: savedAi, error: saveAiError } = await supabase.from('ai_messages').insert({ conversation_id: activeId, user_id: profile.id, role: 'assistant', mode: questionMode, content: data.answer }).select('id,role,mode,content,created_at').single();
+      if (saveAiError) throw saveAiError;
+      setMessages(current => [...current, savedAi]);
+      await supabase.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', activeId);
+      await loadConversations(activeId);
+    } catch (error) {
+      setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', mode: questionMode, content: error.message || 'Something went wrong.' }]);
+    } finally {
+      setBusy(false);
+      focusInput();
+      scrollChat();
+    }
+  }
+
+  const filteredHistory = conversations.filter(item => (item.title || '').toLowerCase().includes(historySearch.toLowerCase()));
+  const activeSuggestion = suggestions.length ? suggestions[suggestionIndex % suggestions.length] : null;
 
   return (
-    <Page
-      eyebrow="YOUR ASSISTANT"
-      title="ONSTOOD AI"
-    >
+    <Page eyebrow="INTELLIGENCE LAYER" title="ONSTOOD AI">
+      <style>{`
+        .onstood-advanced-chip{
+          width:190px; min-width:190px; min-height:48px; padding:0 14px;
+          border-radius:14px; border:1px solid rgba(99,102,241,.30);
+          background:
+            radial-gradient(circle at 72% 50%,rgba(79,70,229,.24),transparent 34%),
+            linear-gradient(135deg,rgba(8,15,35,.97),rgba(25,35,74,.96));
+          color:#fff; position:relative; overflow:hidden; cursor:pointer;
+          box-shadow:inset 0 0 20px rgba(96,165,250,.05),0 5px 18px rgba(30,41,59,.12);
+          isolation:isolate;
+        }
+        .onstood-advanced-chip:disabled{opacity:.44;cursor:default}
+        .onstood-chip-label{
+          position:relative;z-index:5;display:flex;align-items:center;justify-content:center;
+          gap:8px;white-space:nowrap;text-shadow:0 1px 7px rgba(0,0,0,.78);
+        }
+        .onstood-chip-title{
+          font-size:11px;font-weight:750;letter-spacing:.9px;line-height:1;
+        }
+        .onstood-chip-count{
+          min-width:27px;padding:3px 6px;border-radius:999px;
+          border:1px solid rgba(191,219,254,.22);
+          background:rgba(255,255,255,.055);
+          font-size:9px;font-weight:800;letter-spacing:.2px;line-height:1;
+          color:rgba(239,246,255,.92);
+          box-shadow:inset 0 0 8px rgba(96,165,250,.05);
+        }
+        .onstood-chip-core{
+          position:absolute;right:17px;top:11px;width:27px;height:27px;border-radius:5px;
+          border:1px solid rgba(147,197,253,.20);
+          background:linear-gradient(145deg,rgba(5,12,27,.46),rgba(30,64,175,.12));
+          box-shadow:0 0 10px rgba(96,165,250,.08);opacity:.40;z-index:1;
+        }
+        .onstood-chip-core:before,.onstood-chip-core:after{
+          content:"";position:absolute;inset:5px;border:1px solid rgba(147,197,253,.22);border-radius:2px;
+        }
+        .onstood-chip-core i{position:absolute;width:2px;height:4px;background:rgba(147,197,253,.25)}
+        .onstood-chip-core i:nth-child(1){left:-4px;top:5px}.onstood-chip-core i:nth-child(2){left:-4px;bottom:5px}
+        .onstood-chip-core i:nth-child(3){right:-4px;top:5px}.onstood-chip-core i:nth-child(4){right:-4px;bottom:5px}
+        .onstood-chip-core i:nth-child(5){top:-4px;left:12px;width:4px;height:2px}.onstood-chip-core i:nth-child(6){bottom:-4px;left:12px;width:4px;height:2px}
+        .onstood-chip-circuit{position:absolute;height:1px;background:rgba(96,165,250,.16);z-index:0}
+        .onstood-chip-circuit:after{content:"";position:absolute;right:-4px;top:-2px;width:5px;height:5px;border:1px solid rgba(147,197,253,.18);border-radius:50%}
+        .onstood-chip-circuit-a{width:72px;right:43px;top:15px;transform:rotate(-7deg)}
+        .onstood-chip-circuit-b{width:82px;right:43px;top:24px}
+        .onstood-chip-circuit-c{width:68px;right:43px;top:34px;transform:rotate(7deg)}
+        .onstood-chip-circuit-d{width:42px;right:7px;top:24px}
+        .onstood-chip-packet{
+          position:absolute;width:13px;height:2px;border-radius:999px;
+          background:rgba(191,219,254,.96);box-shadow:0 0 5px rgba(96,165,250,.95),0 0 10px rgba(99,102,241,.65);
+          z-index:2;opacity:0;
+        }
+        .packet-a{top:14px;right:108px;animation:onstoodDataA 1.93s linear infinite}
+        .packet-b{top:23px;right:119px;animation:onstoodDataB 2.4s linear .55s infinite}
+        .packet-c{top:33px;right:106px;animation:onstoodDataC 2.13s linear 1.1s infinite}
+        @keyframes onstoodDataA{0%{transform:translateX(-18px) rotate(-7deg);opacity:0}12%{opacity:.9}78%{opacity:.9}100%{transform:translateX(68px) rotate(-7deg);opacity:0}}
+        @keyframes onstoodDataB{0%{transform:translateX(-10px);opacity:0}12%{opacity:.9}78%{opacity:.9}100%{transform:translateX(82px);opacity:0}}
+        @keyframes onstoodDataC{0%{transform:translateX(-14px) rotate(7deg);opacity:0}12%{opacity:.85}78%{opacity:.85}100%{transform:translateX(66px) rotate(7deg);opacity:0}}
+        .onstood-advanced-chip:not(:disabled):hover{
+          border-color:rgba(129,140,248,.56);box-shadow:inset 0 0 24px rgba(96,165,250,.09),0 0 18px rgba(99,102,241,.16)
+        }
+        .onstood-advanced-chip:not(:disabled):hover .onstood-chip-core{opacity:.58}
+        .onstood-advanced-chip:not(:disabled):active .onstood-chip-core{box-shadow:0 0 18px rgba(96,165,250,.35);opacity:.75}
 
-      <div className="ai-page card">
-
-        <div className="ai-intro">
-
-          <div className="ai-badge">
-            <Sparkles size={16} />
-            ONSTOOD AI
+        .onstood-standard-chip{
+          width:50px;min-width:50px;min-height:48px;border-radius:14px;
+          border:1px solid rgba(99,102,241,.22);
+          background:linear-gradient(145deg,rgba(31,41,74,.96),rgba(49,46,129,.88));
+          color:white;position:relative;overflow:hidden;cursor:pointer;
+          display:grid;place-items:center;isolation:isolate;
+          box-shadow:inset 0 0 14px rgba(96,165,250,.05),0 4px 12px rgba(30,41,59,.10);
+        }
+        .onstood-standard-chip:disabled{opacity:.45;cursor:default}
+        .onstood-standard-chip svg{position:relative;z-index:5}
+        .onstood-standard-core{
+          position:absolute;width:18px;height:18px;border-radius:4px;
+          border:1px solid rgba(191,219,254,.18);
+          background:rgba(15,23,42,.26);opacity:.38;z-index:1;
+          box-shadow:0 0 8px rgba(96,165,250,.08);
+        }
+        .onstood-standard-track{
+          position:absolute;height:1px;width:43px;background:rgba(147,197,253,.14);z-index:0;
+        }
+        .track-a{left:3px;top:16px;transform:rotate(12deg)}
+        .track-b{left:3px;bottom:15px;transform:rotate(-12deg)}
+        .onstood-standard-packet{
+          position:absolute;width:9px;height:2px;border-radius:999px;
+          background:rgba(219,234,254,.94);
+          box-shadow:0 0 5px rgba(96,165,250,.82),0 0 8px rgba(99,102,241,.48);
+          z-index:2;opacity:0;
+        }
+        .standard-packet-a{left:2px;top:15px;animation:onstoodStandardA 3.3s linear infinite}
+        .standard-packet-b{right:2px;bottom:14px;animation:onstoodStandardB 3.7s linear 1.25s infinite}
+        @keyframes onstoodStandardA{
+          0%{transform:translateX(-8px) rotate(12deg);opacity:0}
+          15%{opacity:.82}78%{opacity:.82}
+          100%{transform:translateX(39px) rotate(12deg);opacity:0}
+        }
+        @keyframes onstoodStandardB{
+          0%{transform:translateX(8px) rotate(-12deg);opacity:0}
+          15%{opacity:.78}78%{opacity:.78}
+          100%{transform:translateX(-39px) rotate(-12deg);opacity:0}
+        }
+        .onstood-standard-chip:not(:disabled):hover{
+          border-color:rgba(129,140,248,.48);
+          box-shadow:inset 0 0 18px rgba(96,165,250,.08),0 0 14px rgba(99,102,241,.12);
+        }
+        @media(max-width:850px){.onstood-advanced-chip{width:154px;min-width:154px}.onstood-chip-title{font-size:9.5px;letter-spacing:.55px}.onstood-chip-label{gap:5px}.onstood-chip-count{padding:3px 5px}}
+      `}</style>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            {activeSuggestion ? (
+              <div key={`${activeSuggestion.kind}-${suggestionIndex}`} style={{ display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease' }}>
+                <span style={{ padding: '5px 9px', borderRadius: 999, background: 'rgba(99,102,241,.09)', fontSize: 11, fontWeight: 800 }}>{activeSuggestion.kind}</span>
+                <div style={{ minWidth: 0 }}><b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSuggestion.title}</b><small className="muted">{activeSuggestion.meta}</small></div>
+              </div>
+            ) : <small className="muted">Suggestions will appear here from ONSTOOD content available to you.</small>}
           </div>
-
-          <h2>
-            Your student assistant.
-          </h2>
-
-          <p>
-            One interface for questions,
-            planning, study support and
-            eventually your private knowledge base.
-          </p>
-
+          {suggestions.length > 1 && <small className="muted">{suggestionIndex + 1}/{suggestions.length}</small>}
         </div>
 
+        <div style={{ display: 'flex', minHeight: 610 }}>
+          <aside style={{ width: 250, borderRight: '1px solid rgba(0,0,0,.08)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Search size={15} /><input value={historySearch} onChange={e => setHistorySearch(e.target.value)} placeholder="Search history…" style={{ width: '100%' }} /></div>
+            <small className="muted" style={{ fontWeight: 800 }}>HISTORY</small>
+            <div style={{ overflowY: 'auto', maxHeight: 510 }}>
+              {filteredHistory.map(item => (
+                <button key={item.id} type="button" onClick={() => { setConversationId(item.id); focusInput(); }} style={{ width: '100%', border: 0, borderRadius: 10, padding: '10px 9px', marginBottom: 4, textAlign: 'left', cursor: 'pointer', background: conversationId === item.id ? 'rgba(99,102,241,.09)' : 'transparent' }}>
+                  <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{item.title || 'ONSTOOD AI'}</b>
+                  <small className="muted">{new Date(item.updated_at).toLocaleDateString()}</small>
+                </button>
+              ))}
+              {!filteredHistory.length && <small className="muted">Your AI history will stay here.</small>}
+            </div>
+          </aside>
 
-        <div className="chat">
-
-          {messages.map((message, index) => (
-
-            <div
-              key={index}
-              className={
-                message.role === 'me'
-                  ? 'bubble me'
-                  : 'bubble'
-              }
-            >
-              {message.text}
+          <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}>
+              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
+              {messages.map(message => (
+                <div key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
+                  {message.role === 'assistant' && message.mode === 'advanced' && <small style={{ display: 'block', marginBottom: 5, fontWeight: 900 }}>✦ ADVANCED AI</small>}
+                  {renderAiText(message.content)}
+                </div>
+              ))}
+              {busy && <div className="bubble"><Sparkles size={15} /> ONSTOOD AI is thinking…</div>}
+              <div ref={chatEndRef} />
             </div>
 
-          ))}
+            <div style={{ borderTop: '1px solid rgba(0,0,0,.08)', padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+                <small className="muted">Free {standardLeft}/{plan.standard_limit} · Advanced {advancedLeft}/{plan.advanced_limit} · refresh 12:00 PM</small>
+                <small className="muted">Enter = Ask AI</small>
+              </div>
+              <form onSubmit={event => send(event, 'standard')} style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+                <input ref={inputRef} autoFocus value={text} onChange={e => setText(e.target.value)} placeholder="Ask ONSTOOD AI" disabled={busy} style={{ flex: 1, minHeight: 48, fontSize: 15 }} />
+                <button
+                  className="onstood-standard-chip"
+                  disabled={busy || !text.trim()}
+                  title="Ask AI · Enter"
+                >
+                  <span className="onstood-standard-track track-a" />
+                  <span className="onstood-standard-track track-b" />
+                  <span className="onstood-standard-packet standard-packet-a" />
+                  <span className="onstood-standard-packet standard-packet-b" />
+                  <span className="onstood-standard-core" aria-hidden="true" />
+                  <Send size={16} />
+                </button>
 
+                <button
+                  type="button"
+                  className="onstood-advanced-chip"
+                  disabled={busy || !text.trim() || advancedLeft <= 0}
+                  onClick={event => send(event, 'advanced')}
+                  title="Ask Advanced AI"
+                >
+                  <span className="onstood-chip-circuit onstood-chip-circuit-a" />
+                  <span className="onstood-chip-circuit onstood-chip-circuit-b" />
+                  <span className="onstood-chip-circuit onstood-chip-circuit-c" />
+                  <span className="onstood-chip-circuit onstood-chip-circuit-d" />
+                  <span className="onstood-chip-packet packet-a" />
+                  <span className="onstood-chip-packet packet-b" />
+                  <span className="onstood-chip-packet packet-c" />
+                  <span className="onstood-chip-core" aria-hidden="true">
+                    <i /><i /><i /><i /><i /><i />
+                  </span>
+                  <span className="onstood-chip-label">
+                    <span className="onstood-chip-title">ADVANCED AI</span>
+                    <span className="onstood-chip-count">{advancedLeft}/{plan.advanced_limit}</span>
+                  </span>
+                </button>
+              </form>
+            </div>
+          </section>
         </div>
-
-
-        <form
-          className="chat-input"
-          onSubmit={send}
-        >
-
-          <input
-            placeholder="Ask anything about your student life…"
-            value={text}
-            onChange={e =>
-              setText(e.target.value)
-            }
-          />
-
-          <button className="btn primary">
-            <Send size={16} />
-          </button>
-
-        </form>
-
       </div>
-
     </Page>
   );
 }
-
 
 /* =========================================================
    PROFILE
    ========================================================= */
 
-function Profile({
+
+function MyProfile({ profile, notify, onEditProfile }) {
+  const [albums,setAlbums]=useState([]);
+  const [photosByAlbum,setPhotosByAlbum]=useState({});
+  const [followers,setFollowers]=useState(0);
+  const [following,setFollowing]=useState(0);
+  const [connections,setConnections]=useState(0);
+  const [albumTitle,setAlbumTitle]=useState('');
+  const [albumVisibility,setAlbumVisibility]=useState('');
+  const [albumFiles,setAlbumFiles]=useState([]);
+  const [uploading,setUploading]=useState(false);
+  const [largePhoto,setLargePhoto]=useState(null);
+
+  async function signedPhoto(photo){
+    const {data}=await supabase.storage.from('profile-photos').createSignedUrl(photo.storage_path,3600);
+    return {...photo,signed_url:data?.signedUrl||null};
+  }
+
+  async function loadSocial(){
+    if(!profile?.id) return;
+    const [a,p,fr,fg,cn]=await Promise.all([
+      supabase.from('photo_albums').select('*').eq('owner_id',profile.id).order('created_at',{ascending:false}),
+      supabase.from('photos').select('*').eq('owner_id',profile.id).order('created_at',{ascending:false}),
+      supabase.from('follows').select('*',{count:'exact',head:true}).eq('following_id',profile.id),
+      supabase.from('follows').select('*',{count:'exact',head:true}).eq('follower_id',profile.id),
+      supabase.from('friend_requests').select('*',{count:'exact',head:true}).eq('status','accepted').or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+    ]);
+    setAlbums(a.data||[]); setFollowers(fr.count||0); setFollowing(fg.count||0); setConnections(cn.count||0);
+    const signed=await Promise.all((p.data||[]).map(signedPhoto));
+    const grouped={};
+    signed.forEach(photo=>{(grouped[photo.album_id] ||= []).push(photo)});
+    setPhotosByAlbum(grouped);
+  }
+  useEffect(()=>{loadSocial()},[profile?.id]);
+
+  async function uploadPhotosToAlbum(album, files){
+    const list=Array.from(files||[]);
+    if(!list.length) return;
+    setUploading(true);
+    try{
+      for(const file of list){
+        if(!file.type?.startsWith('image/')) continue;
+        const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
+        const safeExt=['jpg','jpeg','png','webp','gif'].includes(ext)?ext:'jpg';
+        const path=`${profile.id}/${album.id}/${crypto.randomUUID()}.${safeExt}`;
+        const {error:upErr}=await supabase.storage.from('profile-photos').upload(path,file,{contentType:file.type,upsert:false});
+        if(upErr) throw upErr;
+        const {error:dbErr}=await supabase.from('photos').insert({
+          album_id:album.id, owner_id:profile.id, storage_path:path, visibility:album.visibility
+        });
+        if(dbErr){ await supabase.storage.from('profile-photos').remove([path]); throw dbErr; }
+      }
+      notify(list.length===1?'Photo uploaded.':`${list.length} photos uploaded.`);
+      await loadSocial();
+    }catch(error){notify(error.message||'Photo upload failed.')}finally{setUploading(false)}
+  }
+
+  async function createAlbum(){
+    if(!albumTitle.trim()||!albumVisibility) return;
+    setUploading(true);
+    const {data,error}=await supabase.from('photo_albums').insert({
+      owner_id:profile.id,title:albumTitle.trim(),visibility:albumVisibility
+    }).select().single();
+    if(error){setUploading(false);notify(error.message);return}
+    if(albumFiles.length) await uploadPhotosToAlbum(data,albumFiles);
+    setAlbumTitle('');setAlbumVisibility('');setAlbumFiles([]);setUploading(false);await loadSocial();notify(`Album “${data.title}” created.`);
+  }
+
+  async function deleteAlbum(album){
+    const paths=(photosByAlbum[album.id]||[]).map(p=>p.storage_path).filter(Boolean);
+    if(paths.length) await supabase.storage.from('profile-photos').remove(paths);
+    const {error}=await supabase.from('photo_albums').delete().eq('id',album.id).eq('owner_id',profile.id);
+    if(error){notify(error.message);return} loadSocial();
+  }
+
+  async function deletePhoto(photo){
+    await supabase.storage.from('profile-photos').remove([photo.storage_path]);
+    const {error}=await supabase.from('photos').delete().eq('id',photo.id).eq('owner_id',profile.id);
+    if(error){notify(error.message);return} loadSocial();
+  }
+
+  async function changeAlbumPrivacy(id,visibility){
+    const {error}=await supabase.from('photo_albums').update({visibility,updated_at:new Date().toISOString()}).eq('id',id).eq('owner_id',profile.id);
+    if(error){notify(error.message);return}
+    await supabase.from('photos').update({visibility}).eq('album_id',id).eq('owner_id',profile.id);
+    loadSocial();
+  }
+
+  return <Page eyebrow="PROFILE" title={`${profile.name||''} ${profile.surname||''}`}>
+    <div className="card">
+      <div style={{display:'flex',gap:18,alignItems:'center',flexWrap:'wrap'}}>
+        <Avatar profile={profile}/>
+        <div style={{flex:1,minWidth:220}}>
+          <h2 style={{margin:'0 0 4px'}}>{profile.name} {profile.surname}</h2>
+          <div className="muted">{profile.university||'ONSTOOD member'}{profile.degree?` · ${profile.degree}`:''}</div>
+          <div className="row" style={{gap:18,marginTop:12,flexWrap:'wrap'}}>
+            <b>{connections} <span className="muted">Connections</span></b>
+            <b>{followers} <span className="muted">Followers</span></b>
+            <b>{following} <span className="muted">Following</span></b>
+          </div>
+        </div>
+        <button className="btn subtle" onClick={onEditProfile}>Edit profile</button>
+      </div>
+    </div>
+
+    <div className="card" style={{marginTop:16}}>
+      <div className="card-head"><div><h3>Photos & albums</h3><small className="muted">Create an album like “Matura 2025” and upload one or many photos.</small></div><FolderOpen size={18}/></div>
+      <div style={{display:'grid',gap:9}}>
+        <input value={albumTitle} onChange={e=>setAlbumTitle(e.target.value)} placeholder="Album title · e.g. Matura 2025"/>
+        <select value={albumVisibility} onChange={e=>setAlbumVisibility(e.target.value)}>
+          <option value="">Choose privacy…</option><option value="only_me">Only me</option><option value="connections">Connections</option><option value="public">Public</option>
+        </select>
+        <label className="btn subtle" style={{width:'fit-content',cursor:'pointer'}}>
+          <Upload size={15}/> Choose photos
+          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={e=>setAlbumFiles(Array.from(e.target.files||[]))}/>
+        </label>
+        {albumFiles.length>0 && <small className="muted">{albumFiles.length} photo{albumFiles.length===1?'':'s'} selected.</small>}
+        <button className="btn primary" disabled={!albumTitle.trim()||!albumVisibility||uploading} onClick={createAlbum}>{uploading?'Working…':'Create album'}</button>
+      </div>
+      <small className="muted" style={{display:'block',marginTop:8}}>Privacy must be chosen before the album is created. You can change it later.</small>
+
+      <div style={{display:'grid',gap:14,marginTop:18}}>
+        {albums.length===0?<div className="empty compact">No albums yet.</div>:albums.map(a=><div className="card" key={a.id} style={{padding:14}}>
+          <div className="metric" style={{marginBottom:10}}>
+            <span><b>{a.title}</b><small className="muted" style={{display:'block'}}>{a.visibility.replaceAll('_',' ')} · {(photosByAlbum[a.id]||[]).length} photos</small></span>
+            <span className="row" style={{gap:6}}>
+              <select value={a.visibility} onChange={e=>changeAlbumPrivacy(a.id,e.target.value)}><option value="only_me">Only me</option><option value="connections">Connections</option><option value="public">Public</option></select>
+              <button className="icon-btn" title="Delete album" onClick={()=>deleteAlbum(a)}><Trash2 size={15}/></button>
+            </span>
+          </div>
+          <label className="btn subtle" style={{width:'fit-content',cursor:'pointer',marginBottom:10}}>
+            <Upload size={15}/> Add photos
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={e=>{uploadPhotosToAlbum(a,e.target.files);e.target.value=''}}/>
+          </label>
+          {(photosByAlbum[a.id]||[]).length>0 && <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8}}>
+            {(photosByAlbum[a.id]||[]).map(photo=><div key={photo.id} style={{position:'relative',aspectRatio:'1/1',overflow:'hidden',borderRadius:12,background:'#eef1f7'}}>
+              {photo.signed_url && <button type="button" onClick={()=>setLargePhoto(photo)} title="Open photo" style={{border:0,padding:0,width:'100%',height:'100%',cursor:'zoom-in',background:'transparent'}}><img src={photo.signed_url} alt={a.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/></button>}
+              <button className="icon-btn" title="Delete photo" onClick={()=>deletePhoto(photo)} style={{position:'absolute',right:6,top:6,background:'rgba(255,255,255,.9)',zIndex:2}}><Trash2 size={14}/></button>
+            </div>)}
+          </div>}
+        </div>)}
+      </div>
+    </div>
+    {largePhoto?.signed_url&&<div role="dialog" aria-modal="true" onClick={()=>setLargePhoto(null)} style={{position:'fixed',inset:0,zIndex:12000,background:'rgba(7,10,20,.88)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,cursor:'zoom-out'}}>
+      <img src={largePhoto.signed_url} alt="Photo" onClick={e=>e.stopPropagation()} style={{maxWidth:'94vw',maxHeight:'90vh',objectFit:'contain',borderRadius:14,boxShadow:'0 25px 80px rgba(0,0,0,.45)'}}/>
+      <button className="icon-btn" onClick={()=>setLargePhoto(null)} style={{position:'fixed',right:24,top:24,background:'white'}}><X size={20}/></button>
+    </div>}
+    <ProfileTimeline viewer={profile} person={profile} connectionStatus="connected" notify={notify}/>
+  </Page>
+}
+
+function ProfileEditor({
   profile,
   setProfile,
   notify
@@ -18074,6 +18850,26 @@ function AdminControlCenter({
   const [feedbackFilter, setFeedbackFilter] =
     useState('all');
 
+  const [financePeriod, setFinancePeriod] = useState('month');
+  const [finance, setFinance] = useState({ revenue: 0, costs: 0, profit: 0, ai_cost: 0, entries: 0, currency: 'USD' });
+  const [planSettings, setPlanSettings] = useState([]);
+
+  async function loadOwnerFinance(period = financePeriod) {
+    if (role !== 'owner') return;
+    const now = new Date();
+    let from = new Date(0);
+    if (period === 'today') { from = new Date(now); from.setHours(0,0,0,0); }
+    if (period === 'week') from = new Date(now.getTime() - 7*24*60*60*1000);
+    if (period === 'month') { from = new Date(now.getFullYear(), now.getMonth(), 1); }
+    if (period === 'year') { from = new Date(now.getFullYear(), 0, 1); }
+    const [{ data: summary }, { data: plans }] = await Promise.all([
+      supabase.rpc('owner_finance_summary', { p_from: from.toISOString(), p_to: now.toISOString() }),
+      supabase.from('plan_settings').select('plan_code,display_name,monthly_price_eur,standard_daily_limit,advanced_daily_limit,active').order('monthly_price_eur')
+    ]);
+    if (summary) setFinance(summary);
+    if (plans) setPlanSettings(plans);
+  }
+
 
   const canManageSupport =
     [
@@ -18442,6 +19238,8 @@ function AdminControlCenter({
 
   }, [profile.id]);
 
+  useEffect(() => { if (role === 'owner' && tab === 'finance') loadOwnerFinance(financePeriod); }, [role, tab, financePeriod]);
+
 
   async function updateFeedbackStatus(
     item,
@@ -18714,6 +19512,7 @@ function AdminControlCenter({
       'Dashboard',
       Activity
     ],
+    ...(role === 'owner' ? [['finance', 'Owner Finance', Activity]] : []),
     [
       'users',
       'Users',
@@ -18955,6 +19754,29 @@ function AdminControlCenter({
 
         </>
 
+      )}
+
+
+      {tab === 'finance' && role === 'owner' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head"><div><h3>Owner Finance</h3><small className="muted">Revenue, costs, profit and AI economics from the permanent finance ledger.</small></div><Activity size={18}/></div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+              {['today','week','month','year','all'].map(p => <button key={p} className={financePeriod===p?'btn primary':'btn subtle'} onClick={()=>setFinancePeriod(p)}>{p==='all'?'All time':p[0].toUpperCase()+p.slice(1)}</button>)}
+            </div>
+            <div className="stat-row">
+              <Stat label="Revenue" value={`$${Number(finance.revenue||0).toFixed(4)}`} />
+              <Stat label="Total costs" value={`$${Number(finance.costs||0).toFixed(4)}`} />
+              <Stat label="Profit" value={`$${Number(finance.profit||0).toFixed(4)}`} />
+              <Stat label="AI cost" value={`$${Number(finance.ai_cost||0).toFixed(4)}`} />
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-head"><div><h3>Plan Engine</h3><small className="muted">Backend-controlled limits and pricing. FREE Advanced AI is locked.</small></div><ShieldCheck size={18}/></div>
+            {(planSettings||[]).map(item => <div className="metric" key={item.plan_code}><span><b>{item.display_name}</b><small className="muted" style={{display:'block'}}>{item.standard_daily_limit} Standard/day · {item.advanced_daily_limit} Advanced/day</small></span><b>{Number(item.monthly_price_eur||0)===0?'FREE':`€${Number(item.monthly_price_eur).toFixed(2)}/mo`}</b></div>)}
+            <div className="notice" style={{marginTop:12}}>PRO limits are configurable in the backend; €8.99/month is the planned price. Revenue remains zero until real monetization is connected.</div>
+          </div>
+        </div>
       )}
 
 
@@ -19716,6 +20538,7 @@ function AdminControlCenter({
 
 function SettingsPage({
   profile,
+  setProfile,
   notify
 }) {
 
@@ -19728,6 +20551,7 @@ function SettingsPage({
     show_university: true,
     show_city: true,
     allow_connection_requests: 'everyone',
+    follow_privacy: profile?.follow_privacy || 'everyone',
     allow_chat: 'connections',
     allow_post_office: 'connections',
     notify_connections: true,
@@ -19884,6 +20708,7 @@ function SettingsPage({
 
     setSaving(true);
 
+    await supabase.from('profiles').update({ follow_privacy: settings.follow_privacy || 'everyone' }).eq('id', profile.id);
     const payload = {
       ...settings,
       user_id: profile.id,
@@ -19892,6 +20717,7 @@ function SettingsPage({
     };
 
     delete payload.id;
+    delete payload.follow_privacy;
 
     const {
       error
