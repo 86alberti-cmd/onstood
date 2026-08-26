@@ -1,0 +1,2346 @@
+import React, { useEffect, useState } from 'react';
+import {
+  Mail,
+  MessageCircle,
+  Paperclip,
+  Send,
+  Sparkles,
+  Users
+} from 'lucide-react';
+import { supabase } from '../../lib/supabase';
+import Avatar from '../Avatar';
+import { Stat } from '../ui';
+import Post from './Post';
+
+export default function HomePage({
+  profile,
+  go,
+  notify,
+  overview,
+  overviewLoading,
+  onOpenProfile,
+  onAskAiMaterial,
+  aiAccess
+}) {
+
+  const [posts, setPosts] = useState([]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(true);
+  const [likes, setLikes] = useState({});
+  const [likedByMe, setLikedByMe] = useState({});
+  const [comments, setComments] = useState({});
+  const [shares, setShares] = useState({});
+  const [commentText, setCommentText] = useState({});
+  const [connections, setConnections] = useState([]);
+  const [shareTarget, setShareTarget] = useState(null);
+  const [mailTarget, setMailTarget] = useState(null);
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+
+  const [postFiles, setPostFiles] = useState([]);
+  const [postAudience, setPostAudience] = useState('public');
+  const [publishing, setPublishing] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+
+  const [
+    openAiSuggestedPostId,
+    setOpenAiSuggestedPostId
+  ] = useState(null);
+
+  const [
+    localAiInterestTokens,
+    setLocalAiInterestTokens
+  ] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem(
+          `onstood_ai_interests_${profile?.id || 'guest'}`
+        ) || '{}'
+      );
+    } catch {
+      return {};
+    }
+  });
+
+
+
+  async function loadConnections() {
+
+    const {
+      data: accepted,
+      error
+    } = await supabase
+      .from('friend_requests')
+      .select('sender_id,receiver_id')
+      .eq('status', 'accepted')
+      .or(
+        `sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`
+      );
+
+    if (error) {
+      console.error(
+        'Feed connections error:',
+        error
+      );
+      return;
+    }
+
+    const ids = [
+      ...new Set(
+        (accepted || []).map(item =>
+          item.sender_id === profile.id
+            ? item.receiver_id
+            : item.sender_id
+        )
+      )
+    ];
+
+    if (!ids.length) {
+      setConnections([]);
+      return;
+    }
+
+    const {
+      data,
+      error: profilesError
+    } = await supabase
+      .from('profiles')
+      .select(`
+        id,
+        name,
+        surname,
+        university,
+        degree,
+        avatar_url
+      `)
+      .in('id', ids)
+      .order('name');
+
+    if (profilesError) {
+      console.error(
+        'Feed connection profiles error:',
+        profilesError
+      );
+      return;
+    }
+
+    setConnections(data || []);
+  }
+
+
+  async function loadFeed() {
+
+    setBusy(true);
+
+    const {
+      data,
+      error
+    } = await supabase
+      .from('posts')
+      .select(`
+        id,
+        body,
+        created_at,
+        user_id,
+        audience,
+        shared_from_post_id,
+        post_media (
+          id,
+          media_type,
+          storage_path,
+          mime_type,
+          caption,
+          sort_order,
+          created_at
+        ),
+        profiles!posts_user_id_fkey (
+          name,
+          surname,
+          university,
+          degree,
+          avatar_url
+        )
+      `)
+      .order(
+        'created_at',
+        {
+          ascending: false
+        }
+      )
+      .limit(40);
+
+    if (error) {
+      notify(error.message);
+      setBusy(false);
+      return;
+    }
+
+    const rows = await Promise.all(
+      (data || []).map(async item => {
+        const signedMedia = await Promise.all(
+          (item.post_media || [])
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+            .map(async media => {
+              const { data: signed } = await supabase.storage
+                .from('post-media')
+                .createSignedUrl(media.storage_path, 60 * 60);
+
+              return {
+                ...media,
+                signed_url: signed?.signedUrl || null
+              };
+            })
+        );
+
+        return {
+          ...item,
+          post_media: signedMedia
+        };
+      })
+    );
+
+    setPosts(rows);
+
+    const ids =
+      rows.map(item => item.id);
+
+    if (!ids.length) {
+      setBusy(false);
+      return;
+    }
+
+    const [
+      likesResult,
+      commentsResult,
+      sharesResult
+    ] = await Promise.all([
+
+      supabase
+        .from('post_likes')
+        .select('post_id,user_id')
+        .in('post_id', ids),
+
+      supabase
+        .from('post_comments')
+        .select(`
+          id,
+          post_id,
+          user_id,
+          body,
+          created_at,
+          profiles (
+            name,
+            surname,
+            avatar_url
+          )
+        `)
+        .in('post_id', ids)
+        .order('created_at'),
+
+      supabase
+        .from('post_shares')
+        .select('post_id,user_id')
+        .in('post_id', ids)
+
+    ]);
+
+    const likeCounts = {};
+    const mine = {};
+
+    (likesResult.data || []).forEach(
+      item => {
+        likeCounts[item.post_id] =
+          (likeCounts[item.post_id] || 0) + 1;
+
+        if (item.user_id === profile.id) {
+          mine[item.post_id] = true;
+        }
+      }
+    );
+
+    const commentMap = {};
+
+    (commentsResult.data || []).forEach(
+      item => {
+        if (!commentMap[item.post_id]) {
+          commentMap[item.post_id] = [];
+        }
+
+        commentMap[item.post_id].push(item);
+      }
+    );
+
+    const shareCounts = {};
+
+    (sharesResult.data || []).forEach(
+      item => {
+        shareCounts[item.post_id] =
+          (shareCounts[item.post_id] || 0) + 1;
+      }
+    );
+
+    setLikes(likeCounts);
+    setLikedByMe(mine);
+    setComments(commentMap);
+    setShares(shareCounts);
+    setBusy(false);
+  }
+
+
+  useEffect(() => {
+    loadFeed();
+    loadConnections();
+  }, [profile.id]);
+
+
+  function addPostFiles(fileList) {
+    const incoming =
+      Array.from(fileList || []);
+
+    if (!incoming.length) {
+      return;
+    }
+
+    setPostFiles(current => {
+      const next = [
+        ...current,
+        ...incoming
+      ];
+
+      const unique = [];
+      const seen = new Set();
+
+      for (const file of next) {
+        const key =
+          `${file.name}:${file.size}:${file.lastModified}`;
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(file);
+        }
+      }
+
+      return unique.slice(0, 12);
+    });
+
+    setComposerOpen(true);
+    setAttachMenuOpen(false);
+  }
+
+
+  function removePostFile(index) {
+    setPostFiles(current =>
+      current.filter(
+        (_, currentIndex) =>
+          currentIndex !== index
+      )
+    );
+  }
+
+
+  async function publish() {
+
+    const body = text.trim();
+    const files = Array.from(postFiles || []);
+
+    if (!body && files.length === 0) {
+      notify('Write something or add a photo/video.');
+      return;
+    }
+
+    if (!['public', 'connections', 'only_me'].includes(postAudience)) {
+      notify('Choose who can see this post.');
+      return;
+    }
+
+    const blockedExtensions =
+      [
+        'exe',
+        'msi',
+        'bat',
+        'cmd',
+        'com',
+        'scr',
+        'ps1',
+        'sh',
+        'js',
+        'jar'
+      ];
+
+    const invalid = files.find(file => {
+      const extension =
+        String(file.name || '')
+          .split('.')
+          .pop()
+          ?.toLowerCase() || '';
+
+      const isImage =
+        file.type?.startsWith('image/');
+
+      const isVideo =
+        file.type?.startsWith('video/');
+
+      const isDocument =
+        [
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'text/plain',
+          'text/csv'
+        ].includes(file.type);
+
+      return (
+        blockedExtensions.includes(
+          extension
+        ) ||
+        !(
+          isImage ||
+          isVideo ||
+          isDocument
+        )
+      );
+    });
+
+    if (invalid) {
+      notify(
+        'Choose a photo, video, PDF, Word, Excel, PowerPoint, TXT or CSV file.'
+      );
+      return;
+    }
+
+    const oversized = files.find(file => {
+      const isDocument =
+        !file.type?.startsWith('image/') &&
+        !file.type?.startsWith('video/');
+
+      return file.size >
+        (
+          isDocument
+            ? 25
+            : 50
+        ) *
+        1024 *
+        1024;
+    });
+
+    if (oversized) {
+      notify(
+        'Photos/videos may be up to 50 MB and documents up to 25 MB.'
+      );
+      return;
+    }
+
+    setPublishing(true);
+
+    let createdPost = null;
+    const uploadedPaths = [];
+
+    try {
+      const {
+        data,
+        error
+      } = await supabase
+        .from('posts')
+        .insert({
+          user_id: profile.id,
+          body,
+          audience: postAudience
+        })
+        .select(`
+          id,
+          body,
+          created_at,
+          user_id,
+          audience,
+          shared_from_post_id
+        `)
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      createdPost = data;
+
+      const mediaRows = [];
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const originalExt =
+          (file.name.split('.').pop() || '').toLowerCase();
+
+        const ext =
+          originalExt ||
+          (file.type?.startsWith('video/') ? 'mp4' : 'jpg');
+
+        const path =
+          `${profile.id}/${data.id}/${crypto.randomUUID()}.${ext}`;
+
+        const { error: uploadError } =
+          await supabase.storage
+            .from('post-media')
+            .upload(path, file, {
+              contentType: file.type,
+              upsert: false,
+              cacheControl: '3600'
+            });
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        uploadedPaths.push(path);
+
+        const mediaType =
+          file.type?.startsWith('video/')
+            ? 'video'
+            : file.type?.startsWith('image/')
+              ? 'image'
+              : 'document';
+
+        const { data: mediaData, error: mediaError } =
+          await supabase
+            .from('post_media')
+            .insert({
+              post_id: data.id,
+              owner_id: profile.id,
+              media_type: mediaType,
+              storage_path: path,
+              mime_type: file.type || null,
+              caption: file.name || null,
+              sort_order: index
+            })
+            .select('*')
+            .single();
+
+        if (mediaError) {
+          throw mediaError;
+        }
+
+        const { data: signed } =
+          await supabase.storage
+            .from('post-media')
+            .createSignedUrl(path, 60 * 60);
+
+        mediaRows.push({
+          ...mediaData,
+          signed_url: signed?.signedUrl || null
+        });
+      }
+
+      setPosts(current => [
+        {
+          ...data,
+          profiles: profile,
+          post_media: mediaRows
+        },
+        ...current
+      ]);
+
+      setText('');
+      setPostFiles([]);
+      setPostAudience('public');
+      setComposerOpen(false);
+      setAttachMenuOpen(false);
+
+      [
+        'onstood-post-photo-input',
+        'onstood-post-video-input',
+        'onstood-post-document-input'
+      ].forEach(id => {
+        const input =
+          document.getElementById(id);
+
+        if (input) {
+          input.value = '';
+        }
+      });
+
+      notify('Post published.');
+
+    } catch (error) {
+
+      if (uploadedPaths.length) {
+        await supabase.storage
+          .from('post-media')
+          .remove(uploadedPaths);
+      }
+
+      if (createdPost?.id) {
+        await supabase
+          .from('posts')
+          .delete()
+          .eq('id', createdPost.id)
+          .eq('user_id', profile.id);
+      }
+
+      notify(
+        error?.message ||
+        'Could not publish the post.'
+      );
+
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function changePostAudience(postId, audience) {
+    if (!['public', 'connections', 'only_me'].includes(audience)) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ audience })
+      .eq('id', postId)
+      .eq('user_id', profile.id)
+      .select('id,audience')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setPosts(current =>
+      current.map(item =>
+        item.id === postId
+          ? { ...item, audience: data.audience }
+          : item
+      )
+    );
+
+    notify('Post privacy updated.');
+  }
+
+
+  async function toggleLike(
+    postId
+  ) {
+
+    const isLiked =
+      Boolean(
+        likedByMe[postId]
+      );
+
+    if (isLiked) {
+
+      const { error } =
+        await supabase
+          .from('post_likes')
+          .delete()
+          .eq('post_id', postId)
+          .eq('user_id', profile.id);
+
+      if (error) {
+        notify(error.message);
+        return;
+      }
+
+      setLikedByMe(current => ({
+        ...current,
+        [postId]: false
+      }));
+
+      setLikes(current => ({
+        ...current,
+        [postId]:
+          Math.max(
+            0,
+            (current[postId] || 1) - 1
+          )
+      }));
+
+    } else {
+
+      const { error } =
+        await supabase
+          .from('post_likes')
+          .insert({
+            post_id: postId,
+            user_id: profile.id
+          });
+
+      if (error) {
+        notify(error.message);
+        return;
+      }
+
+      setLikedByMe(current => ({
+        ...current,
+        [postId]: true
+      }));
+
+      setLikes(current => ({
+        ...current,
+        [postId]:
+          (current[postId] || 0) + 1
+      }));
+
+    }
+  }
+
+
+  async function addComment(
+    postId
+  ) {
+
+    const body =
+      (commentText[postId] || '')
+        .trim();
+
+    if (!body) {
+      return;
+    }
+
+    const {
+      data,
+      error
+    } = await supabase
+      .from('post_comments')
+      .insert({
+        post_id: postId,
+        user_id: profile.id,
+        body
+      })
+      .select('id,post_id,user_id,body,created_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: [
+        ...(current[postId] || []),
+        {
+          ...data,
+          profiles: profile
+        }
+      ]
+    }));
+
+    setCommentText(current => ({
+      ...current,
+      [postId]: ''
+    }));
+  }
+
+
+  async function sharePost(
+    post,
+    audience
+  ) {
+
+    setShareBusy(true);
+
+    const authorName =
+      `${post.profiles?.name || 'Student'} ${post.profiles?.surname || ''}`
+        .trim();
+
+    const sharedBody =
+      `↻ Shared from ${authorName}\n\n${post.body}`;
+
+    const {
+      data,
+      error
+    } = await supabase
+      .from('posts')
+      .insert({
+        user_id: profile.id,
+        body: sharedBody,
+        audience,
+        shared_from_post_id:
+          post.id
+      })
+      .select(`
+        id,
+        body,
+        created_at,
+        user_id,
+        audience,
+        shared_from_post_id
+      `)
+      .single();
+
+    if (error) {
+      setShareBusy(false);
+      notify(error.message);
+      return;
+    }
+
+    const {
+      error: shareError
+    } = await supabase
+      .from('post_shares')
+      .insert({
+        post_id: post.id,
+        user_id: profile.id,
+        audience
+      });
+
+    if (
+      shareError &&
+      shareError.code !== '23505'
+    ) {
+      console.error(
+        'Share tracking error:',
+        shareError
+      );
+    }
+
+    setPosts(current => [
+      {
+        ...data,
+        profiles: profile
+      },
+      ...current
+    ]);
+
+    if (!shareError) {
+      setShares(current => ({
+        ...current,
+        [post.id]:
+          (current[post.id] || 0) + 1
+      }));
+    }
+
+    setShareBusy(false);
+    setShareTarget(null);
+
+    notify(
+      audience === 'public'
+        ? 'Post shared publicly.'
+        : 'Post shared with your connections.'
+    );
+  }
+
+
+  async function sendPostOffice(
+    post
+  ) {
+
+    if (!selectedConnectionId) {
+      notify(
+        'Choose a connection first.'
+      );
+      return;
+    }
+
+    setShareBusy(true);
+
+    const {
+      data: conversationId,
+      error: conversationError
+    } = await supabase
+      .rpc(
+        'start_direct_conversation',
+        {
+          other_user_id:
+            selectedConnectionId
+        }
+      );
+
+    if (conversationError) {
+      setShareBusy(false);
+      notify(
+        conversationError.message
+      );
+      return;
+    }
+
+    const authorName =
+      `${post.profiles?.name || 'Student'} ${post.profiles?.surname || ''}`
+        .trim();
+
+    const {
+      error
+    } = await supabase
+      .from('messages')
+      .insert({
+        conversation_id:
+          conversationId,
+        sender_id:
+          profile.id,
+        body:
+          `Shared post from ${authorName}:\n\n${post.body}`,
+        message_type:
+          'post',
+        metadata: {
+          kind: 'shared_post',
+          post_id: post.id,
+          original_author:
+            authorName
+        }
+      });
+
+    setShareBusy(false);
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setMailTarget(null);
+    setSelectedConnectionId('');
+
+    notify(
+      'Post sent through Messages.'
+    );
+  }
+
+
+  async function deletePost(
+    postId
+  ) {
+
+    const post =
+      posts.find(item => item.id === postId);
+
+    const mediaPaths =
+      (post?.post_media || [])
+        .map(item => item.storage_path)
+        .filter(Boolean);
+
+    if (mediaPaths.length) {
+      await supabase.storage
+        .from('post-media')
+        .remove(mediaPaths);
+    }
+
+    const {
+      error
+    } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', postId)
+      .eq('user_id', profile.id);
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setPosts(current =>
+      current.filter(
+        item => item.id !== postId
+      )
+    );
+
+    notify('Post deleted.');
+  }
+
+
+  function extractInterestTokens(
+    value
+  ) {
+    return String(value || '')
+      .toLowerCase()
+      .split(
+        /[^a-zA-ZÀ-ž0-9]+/
+      )
+      .filter(token =>
+        token.length >= 4
+      )
+      .slice(0, 24);
+  }
+
+
+  function rememberAiInterest(
+    post,
+    weight = 1
+  ) {
+    const tokens =
+      extractInterestTokens(
+        [
+          post?.body,
+          post?.profiles?.university,
+          post?.profiles?.degree
+        ]
+          .filter(Boolean)
+          .join(' ')
+      );
+
+    if (!tokens.length) {
+      return;
+    }
+
+    setLocalAiInterestTokens(
+      current => {
+        const next = {
+          ...current
+        };
+
+        for (const token of tokens) {
+          next[token] =
+            Math.min(
+              12,
+              Number(
+                next[token] || 0
+              ) + weight
+            );
+        }
+
+        const trimmed =
+          Object.fromEntries(
+            Object.entries(next)
+              .sort(
+                (a, b) =>
+                  b[1] - a[1]
+              )
+              .slice(0, 80)
+          );
+
+        try {
+          localStorage.setItem(
+            `onstood_ai_interests_${profile?.id || 'guest'}`,
+            JSON.stringify(
+              trimmed
+            )
+          );
+        } catch {}
+
+        return trimmed;
+      }
+    );
+  }
+
+
+  function suggestionReason(
+    post
+  ) {
+    const profileUniversity =
+      String(
+        profile?.university || ''
+      ).trim();
+
+    const postUniversity =
+      String(
+        post?.profiles?.university ||
+        ''
+      ).trim();
+
+    if (
+      profileUniversity &&
+      postUniversity &&
+      profileUniversity.toLowerCase() ===
+        postUniversity.toLowerCase()
+    ) {
+      return `Popular in ${profileUniversity}`;
+    }
+
+    const degree =
+      String(
+        profile?.degree ||
+        profile?.faculty ||
+        ''
+      ).trim();
+
+    if (
+      degree &&
+      String(
+        post?.body || ''
+      )
+        .toLowerCase()
+        .includes(
+          degree.toLowerCase()
+        )
+    ) {
+      return `Relevant to your ${degree} studies`;
+    }
+
+    const tokens =
+      extractInterestTokens(
+        post?.body
+      );
+
+    const learnedMatch =
+      tokens.find(
+        token =>
+          Number(
+            localAiInterestTokens[
+              token
+            ] || 0
+          ) >= 2
+      );
+
+    if (learnedMatch) {
+      return `Related to topics you explore on ONSTOOD`;
+    }
+
+    if (
+      connections.some(
+        person =>
+          person.id ===
+          post?.user_id
+      )
+    ) {
+      return 'From your student network';
+    }
+
+    return 'Relevant to your studies';
+  }
+
+
+  function personalizationTokens() {
+    return [
+      profile?.university,
+      profile?.faculty,
+      profile?.degree,
+      profile?.city
+    ]
+      .filter(Boolean)
+      .flatMap(value =>
+        String(value)
+          .toLowerCase()
+          .split(
+            /[^a-zA-ZÀ-ž0-9]+/
+          )
+      )
+      .filter(token =>
+        token.length >= 3
+      );
+  }
+
+
+  function scoreSuggestedPost(
+    post
+  ) {
+    let score = 0;
+
+    const body =
+      String(
+        post?.body || ''
+      ).toLowerCase();
+
+    const authorUniversity =
+      String(
+        post?.profiles?.university ||
+        ''
+      ).toLowerCase();
+
+    const authorDegree =
+      String(
+        post?.profiles?.degree ||
+        ''
+      ).toLowerCase();
+
+    const tokens =
+      personalizationTokens();
+
+    for (const token of tokens) {
+      if (body.includes(token)) {
+        score += 3;
+      }
+
+      if (
+        authorUniversity.includes(
+          token
+        )
+      ) {
+        score += 2;
+      }
+
+      if (
+        authorDegree.includes(
+          token
+        )
+      ) {
+        score += 2;
+      }
+    }
+
+    for (
+      const [
+        token,
+        interestWeight
+      ] of Object.entries(
+        localAiInterestTokens
+      )
+    ) {
+      if (
+        body.includes(token)
+      ) {
+        score +=
+          Math.min(
+            4,
+            Number(
+              interestWeight || 0
+            ) * 0.45
+          );
+      }
+    }
+
+    if (
+      connections.some(
+        person =>
+          person.id ===
+          post?.user_id
+      )
+    ) {
+      score += 5;
+    }
+
+    if (
+      post?.user_id ===
+      profile.id
+    ) {
+      score -= 7;
+    }
+
+    const ageHours =
+      Math.max(
+        0,
+        (
+          Date.now() -
+          new Date(
+            post?.created_at || 0
+          ).getTime()
+        ) /
+        3600000
+      );
+
+    score += Math.max(
+      0,
+      3 - ageHours / 72
+    );
+
+    score += Math.min(
+      1.25,
+      Number(
+        likes[post?.id] || 0
+      ) * 0.12 +
+      Number(
+        comments[
+          post?.id
+        ]?.length || 0
+      ) * 0.18
+    );
+
+    return score;
+  }
+
+
+  function buildPersonalizedFeed() {
+    if (!posts.length) {
+      return [];
+    }
+
+    if (posts.length < 10) {
+      return posts.map(post => ({
+        type: 'post',
+        post
+      }));
+    }
+
+    const ranked =
+      [...posts]
+        .sort(
+          (a, b) =>
+            scoreSuggestedPost(b) -
+            scoreSuggestedPost(a)
+        );
+
+    const suggestedIds =
+      new Set();
+
+    const result = [];
+    let regularCount = 0;
+
+    for (const post of posts) {
+      if (
+        suggestedIds.has(post.id)
+      ) {
+        continue;
+      }
+
+      result.push({
+        type: 'post',
+        post
+      });
+
+      regularCount += 1;
+
+      if (regularCount % 9 === 0) {
+        const candidate =
+          ranked.find(item =>
+            !suggestedIds.has(
+              item.id
+            ) &&
+            item.id !== post.id &&
+            !result.some(
+              feedItem =>
+                feedItem.post?.id ===
+                item.id
+            )
+          );
+
+        if (candidate) {
+          suggestedIds.add(
+            candidate.id
+          );
+
+          result.push({
+            type: 'ai_suggestion',
+            post: candidate
+          });
+        }
+      }
+    }
+
+    return result;
+  }
+
+
+  function aiMaterialText(
+    post
+  ) {
+    const author =
+      `${
+        post?.profiles?.name || ''
+      } ${
+        post?.profiles?.surname || ''
+      }`.trim();
+
+    const body =
+      String(
+        post?.body || ''
+      )
+        .trim()
+        .slice(0, 2600);
+
+    return [
+      author
+        ? `ONSTOOD post by ${author}`
+        : 'ONSTOOD post',
+      body
+    ]
+      .filter(Boolean)
+      .join('\\n\\n');
+  }
+
+
+  const personalizedFeed =
+    buildPersonalizedFeed();
+
+
+  return (
+    <>
+
+      <section className="hero">
+        <div>
+          <span className="eyebrow">
+            WELCOME TO ONSTOOD
+          </span>
+
+          <h1>
+            Good to see you,{' '}
+            {profile.name || 'student'}.
+          </h1>
+
+          <p>
+            Connect, learn, collaborate and
+            build your future from one student
+            platform.
+          </p>
+
+          <div className="hero-actions">
+            <button
+              className="btn light"
+              onClick={() => go('ai')}
+            >
+              <Sparkles size={16} />
+              Ask ONSTOOD AI
+            </button>
+
+            <button
+              className="btn ghost"
+              onClick={() => go('friends')}
+            >
+              <Users size={16} />
+              Find students
+            </button>
+          </div>
+        </div>
+      </section>
+
+
+      <div className="stat-row">
+        <Stat
+          label="Connections"
+          value={
+            overviewLoading
+              ? '…'
+              : overview.connections
+          }
+          onClick={() => go('friends')}
+        />
+
+        <Stat
+          label="Upcoming"
+          value={
+            overviewLoading
+              ? '…'
+              : overview.upcoming
+          }
+          onClick={() => go('calendar')}
+        />
+
+        <Stat
+          label="Open tasks"
+          value={
+            overviewLoading
+              ? '…'
+              : overview.tasks
+          }
+          onClick={() => go('tasks')}
+        />
+
+        <Stat
+          label="Documents"
+          value={
+            overviewLoading
+              ? '…'
+              : overview.documents
+          }
+          onClick={() => go('documents')}
+        />
+      </div>
+
+
+      <div className="section-title">
+        <div>
+          <span className="eyebrow dark">
+            COMMUNITY
+          </span>
+          <h2>Student feed</h2>
+        </div>
+      </div>
+
+
+      <div
+        className="feed-card card onstood-post-composer"
+        style={{
+          padding: 14
+        }}
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns:
+              'auto minmax(0,1fr)',
+            gap: 10,
+            alignItems: 'start'
+          }}
+        >
+          <Avatar profile={profile} />
+
+          <div
+            style={{
+              minWidth: 0
+            }}
+          >
+            <textarea
+              name="new-post"
+              placeholder="Share a question, idea, photo, video or document…"
+              value={text}
+              onFocus={() =>
+                setComposerOpen(true)
+              }
+              onChange={event => {
+                setText(
+                  event.target.value
+                );
+                setComposerOpen(true);
+              }}
+              style={{
+                width: '100%',
+                minHeight:
+                  composerOpen
+                    ? 72
+                    : 52,
+                maxHeight: 150,
+                margin: 0,
+                resize: 'vertical',
+                borderRadius: 12,
+                padding: '12px 14px'
+              }}
+            />
+
+            {(composerOpen ||
+              text.trim() ||
+              postFiles.length > 0) && (
+              <>
+                {postFiles.length > 0 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 6,
+                      marginTop: 8
+                    }}
+                  >
+                    {postFiles.map(
+                      (file, index) => {
+                        const kind =
+                          file.type?.startsWith(
+                            'image/'
+                          )
+                            ? '📷'
+                            : file.type?.startsWith(
+                                'video/'
+                              )
+                              ? '🎬'
+                              : '📄';
+
+                        return (
+                          <span
+                            key={`${file.name}-${file.size}-${index}`}
+                            className="chip"
+                            style={{
+                              display:
+                                'inline-flex',
+                              alignItems:
+                                'center',
+                              gap: 6,
+                              maxWidth:
+                                '100%'
+                            }}
+                          >
+                            <span>
+                              {kind}
+                            </span>
+
+                            <span
+                              style={{
+                                overflow:
+                                  'hidden',
+                                textOverflow:
+                                  'ellipsis',
+                                whiteSpace:
+                                  'nowrap',
+                                maxWidth:
+                                  190
+                              }}
+                              title={file.name}
+                            >
+                              {file.name}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removePostFile(
+                                  index
+                                )
+                              }
+                              aria-label={`Remove ${file.name}`}
+                              title="Remove attachment"
+                              style={{
+                                border: 0,
+                                background:
+                                  'transparent',
+                                cursor:
+                                  'pointer',
+                                padding: 0,
+                                lineHeight: 1
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      }
+                    )}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginTop: 9,
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'relative'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn subtle"
+                      onClick={() =>
+                        setAttachMenuOpen(
+                          current =>
+                            !current
+                        )
+                      }
+                      title="Attach a photo, video or document"
+                      style={{
+                        height: 40,
+                        padding: '0 11px'
+                      }}
+                    >
+                      <Paperclip
+                        size={15}
+                      />
+                      Attach
+                    </button>
+
+                    {attachMenuOpen && (
+                      <div
+                        className="card"
+                        style={{
+                          position:
+                            'absolute',
+                          left: 0,
+                          bottom:
+                            'calc(100% + 7px)',
+                          zIndex: 15000,
+                          width: 190,
+                          padding: 6,
+                          boxShadow:
+                            '0 14px 38px rgba(15,23,42,.18)'
+                        }}
+                      >
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer',
+                            marginBottom: 4
+                          }}
+                        >
+                          📷 Photo
+                          <input
+                            id="onstood-post-photo-input"
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer',
+                            marginBottom: 4
+                          }}
+                        >
+                          🎬 Video
+                          <input
+                            id="onstood-post-video-input"
+                            type="file"
+                            accept="video/mp4,video/webm,video/quicktime"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer'
+                          }}
+                        >
+                          📄 Document
+                          <input
+                            id="onstood-post-document-input"
+                            type="file"
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
+                  <select
+                    value={postAudience}
+                    onChange={event =>
+                      setPostAudience(
+                        event.target.value
+                      )
+                    }
+                    title="Who can see this post?"
+                    style={{
+                      width: 132,
+                      minWidth: 132,
+                      height: 40,
+                      margin: 0,
+                      padding:
+                        '0 30px 0 11px',
+                      borderRadius: 10,
+                      fontSize: 13
+                    }}
+                  >
+                    <option value="public">
+                      Public
+                    </option>
+                    <option value="connections">
+                      Connections
+                    </option>
+                    <option value="only_me">
+                      Only me
+                    </option>
+                  </select>
+
+                  <button
+                    className="btn primary"
+                    onClick={publish}
+                    disabled={
+                      publishing ||
+                      (
+                        !text.trim() &&
+                        postFiles.length === 0
+                      )
+                    }
+                    style={{
+                      height: 40,
+                      margin: 0,
+                      padding: '0 15px'
+                    }}
+                  >
+                    <Send size={16} />
+                    {publishing
+                      ? 'Posting…'
+                      : 'Post'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+
+      {busy ? (
+        <div className="empty">
+          Loading feed…
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="empty card">
+          <MessageCircle />
+          <h3>
+            Your community starts here.
+          </h3>
+          <p>
+            Be the first to publish.
+          </p>
+        </div>
+      ) : (
+        personalizedFeed.map(
+          (feedItem, index) => {
+
+            const post =
+              feedItem.post;
+
+            if (
+              feedItem.type ===
+              'ai_suggestion'
+            ) {
+              const opened =
+                openAiSuggestedPostId ===
+                post.id;
+
+              const standardDisabled =
+                Boolean(
+                  aiAccess?.loaded &&
+                  aiAccess.standard_left <= 0
+                );
+
+              const advancedDisabled =
+                Boolean(
+                  !aiAccess?.loaded ||
+                  aiAccess.plan_code !== 'pro' ||
+                  aiAccess.advanced_left <= 0
+                );
+
+              return (
+                <div
+                  key={`ai-suggested-${post.id}-${index}`}
+                  className="card"
+                  onClick={() => {
+                    const willOpen =
+                      openAiSuggestedPostId !==
+                      post.id;
+
+                    setOpenAiSuggestedPostId(
+                      willOpen
+                        ? post.id
+                        : null
+                    );
+
+                    if (willOpen) {
+                      rememberAiInterest(
+                        post,
+                        1
+                      );
+                    }
+                  }}
+                  style={{
+                    position: 'relative',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    border:
+                      '1px solid rgba(99,102,241,.18)',
+                    background:
+                      'linear-gradient(135deg,rgba(15,23,42,.965),rgba(30,41,59,.94))',
+                    color: '#fff',
+                    boxShadow:
+                      '0 14px 38px rgba(15,23,42,.18), inset 0 0 42px rgba(99,102,241,.08)',
+                    padding: 16
+                  }}
+                  title="Anything on ONSTOOD can become a question"
+                >
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      pointerEvents:
+                        'none',
+                      background:
+                        'radial-gradient(circle at 80% 30%,rgba(99,102,241,.18),transparent 34%)'
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      position: 'relative',
+                      zIndex: 2
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems:
+                          'center',
+                        gap: 8,
+                        marginBottom: 10
+                      }}
+                    >
+                      <Sparkles
+                        size={14}
+                      />
+
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 900,
+                          letterSpacing:
+                            '1.05px'
+                        }}
+                      >
+                        SUGGESTED BY ONSTOOD AI
+                      </span>
+
+                      <span
+                        style={{
+                          marginLeft:
+                            'auto',
+                          fontSize: 10,
+                          opacity: .68,
+                          textAlign:
+                            'right'
+                        }}
+                        title="Why ONSTOOD suggested this"
+                      >
+                        {suggestionReason(
+                          post
+                        )}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 10,
+                        alignItems:
+                          'center'
+                      }}
+                    >
+                      <Avatar
+                        profile={{
+                          ...post.profiles,
+                          id:
+                            post.user_id
+                        }}
+                      />
+
+                      <div
+                        style={{
+                          minWidth: 0
+                        }}
+                      >
+                        <b
+                          style={{
+                            display:
+                              'block'
+                          }}
+                        >
+                          {post.profiles
+                            ?.name ||
+                            'Student'}{' '}
+                          {post.profiles
+                            ?.surname ||
+                            ''}
+                        </b>
+
+                        <small
+                          style={{
+                            opacity: .66
+                          }}
+                        >
+                          {post.profiles
+                            ?.university ||
+                            'ONSTOOD'}
+                        </small>
+                      </div>
+                    </div>
+
+                    <p
+                      style={{
+                        margin:
+                          '12px 0 0',
+                        lineHeight: 1.55,
+                        opacity: .9,
+                        display:
+                          '-webkit-box',
+                        WebkitLineClamp:
+                          opened ? 5 : 3,
+                        WebkitBoxOrient:
+                          'vertical',
+                        overflow:
+                          'hidden'
+                      }}
+                    >
+                      {post.body}
+                    </p>
+
+                    {!opened && (
+                      <small
+                        style={{
+                          display:
+                            'block',
+                          marginTop: 10,
+                          opacity: .55
+                        }}
+                      >
+                        Click to explore with ONSTOOD AI
+                      </small>
+                    )}
+
+                    {opened && (
+                      <div
+                        onClick={event =>
+                          event.stopPropagation()
+                        }
+                        style={{
+                          display: 'flex',
+                          gap: 7,
+                          alignItems:
+                            'center',
+                          flexWrap: 'wrap',
+                          marginTop: 13,
+                          paddingTop: 12,
+                          borderTop:
+                            '1px solid rgba(255,255,255,.11)'
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="onstood-global-selection-chip standard"
+                          disabled={
+                            standardDisabled
+                          }
+                          onClick={() => {
+                            rememberAiInterest(
+                              post,
+                              3
+                            );
+
+                            onAskAiMaterial?.(
+                              aiMaterialText(
+                                post
+                              ),
+                              'standard'
+                            );
+                          }}
+                          title="Ask ONSTOOD AI to explain this post"
+                        >
+                          <span className="onstood-global-selection-flow" />
+                          <span className="onstood-global-selection-led" />
+                          <span className="onstood-global-selection-label">
+                            ASK ONSTOOD AI
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="onstood-global-selection-chip advanced"
+                          disabled={
+                            advancedDisabled
+                          }
+                          onClick={() => {
+                            rememberAiInterest(
+                              post,
+                              3
+                            );
+
+                            onAskAiMaterial?.(
+                              aiMaterialText(
+                                post
+                              ),
+                              'advanced'
+                            );
+                          }}
+                          title={
+                            aiAccess?.plan_code ===
+                            'pro'
+                              ? 'Ask Advanced ONSTOOD AI to explain this post'
+                              : 'Advanced AI requires ONSTOOD PRO'
+                          }
+                        >
+                          <span className="onstood-global-selection-flow" />
+                          <span className="onstood-global-selection-led" />
+                          <span className="onstood-global-selection-label">
+                            ASK ADVANCED ONSTOOD AI
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <Post
+                key={post.id}
+                post={post}
+                profile={profile}
+                likeCount={
+                  likes[post.id] || 0
+                }
+                liked={
+                  Boolean(
+                    likedByMe[post.id]
+                  )
+                }
+                comments={
+                  comments[post.id] || []
+                }
+                shareCount={
+                  shares[post.id] || 0
+                }
+                commentValue={
+                  commentText[post.id] || ''
+                }
+                setCommentValue={value =>
+                  setCommentText(
+                    current => ({
+                      ...current,
+                      [post.id]: value
+                    })
+                  )
+                }
+                onLike={() =>
+                  toggleLike(post.id)
+                }
+                onComment={() =>
+                  addComment(post.id)
+                }
+                onShare={() =>
+                  setShareTarget(post)
+                }
+                onPostOffice={() => {
+                  setMailTarget(post);
+                  setSelectedConnectionId('');
+                }}
+                onDelete={() =>
+                  deletePost(post.id)
+                }
+                onOpenProfile={() =>
+                  onOpenProfile?.(
+                    post.user_id
+                  )
+                }
+                onAudienceChange={audience =>
+                  changePostAudience(
+                    post.id,
+                    audience
+                  )
+                }
+              />
+            );
+          }
+        )
+      )}
+
+
+      {shareTarget && (
+
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() =>
+            setShareTarget(null)
+          }
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10050,
+            background:
+              'rgba(15,23,42,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            className="card"
+            onClick={event =>
+              event.stopPropagation()
+            }
+            style={{
+              width:
+                'min(520px, 94vw)'
+            }}
+          >
+            <span className="eyebrow dark">
+              SHARE POST
+            </span>
+
+            <h3>
+              Who should see this share?
+            </h3>
+
+            <p className="muted">
+              Public makes the shared post
+              visible across ONSTOOD.
+              Connections limits it to
+              accepted connections.
+            </p>
+
+            <div className="grid2">
+              <button
+                type="button"
+                className="btn primary"
+                disabled={shareBusy}
+                onClick={() =>
+                  sharePost(
+                    shareTarget,
+                    'public'
+                  )
+                }
+              >
+                Public
+              </button>
+
+              <button
+                type="button"
+                className="btn subtle"
+                disabled={shareBusy}
+                onClick={() =>
+                  sharePost(
+                    shareTarget,
+                    'connections'
+                  )
+                }
+              >
+                Connections
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="btn subtle full"
+              style={{
+                marginTop: 10
+              }}
+              onClick={() =>
+                setShareTarget(null)
+              }
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+
+      )}
+
+
+      {mailTarget && (
+
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() =>
+            setMailTarget(null)
+          }
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10050,
+            background:
+              'rgba(15,23,42,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            className="card"
+            onClick={event =>
+              event.stopPropagation()
+            }
+            style={{
+              width:
+                'min(520px, 94vw)'
+            }}
+          >
+            <span className="eyebrow dark">
+              MESSAGES
+            </span>
+
+            <h3>
+              Send this post privately
+            </h3>
+
+            <p className="muted">
+              Choose one of your accepted
+              connections.
+            </p>
+
+            <select
+              name="post-office-recipient"
+              value={
+                selectedConnectionId
+              }
+              onChange={event =>
+                setSelectedConnectionId(
+                  event.target.value
+                )
+              }
+            >
+              <option value="">
+                Choose a connection
+              </option>
+
+              {connections.map(person => (
+                <option
+                  key={person.id}
+                  value={person.id}
+                >
+                  {
+                    `${person.name || ''} ${person.surname || ''}`
+                      .trim()
+                  }
+                  {person.university
+                    ? ` · ${person.university}`
+                    : ''}
+                </option>
+              ))}
+            </select>
+
+            {connections.length === 0 && (
+              <div
+                className="notice"
+                style={{
+                  marginTop: 10
+                }}
+              >
+                You need an accepted
+                connection before sending
+                a post privately.
+              </div>
+            )}
+
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                justifyContent:
+                  'flex-end',
+                marginTop: 14
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() =>
+                  setMailTarget(null)
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                disabled={
+                  shareBusy ||
+                  !selectedConnectionId
+                }
+                onClick={() =>
+                  sendPostOffice(
+                    mailTarget
+                  )
+                }
+              >
+                <Mail size={15} />
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+
+      )}
+
+    </>
+  );
+}
