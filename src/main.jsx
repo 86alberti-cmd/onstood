@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V29.18.2-PC-TABLET-MOBILE-RESPONSIVE';
+const ONSTOOD_BUILD = 'V29.18.3-MOBILE-MESSAGES-FOCUS';
 console.log('%cOopss, only for developers!', 'font-size:28px;font-weight:900;color:#6558ff;');
 console.log('%cThis area is intended for ONSTOOD developers. Never paste code here that someone sent you — it could compromise your ONSTOOD account.', 'font-size:13px;font-weight:600;color:#64748b;');
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
@@ -1595,11 +1595,41 @@ function App({ session }) {
   const [miniChats, setMiniChats] =
     useState([]);
 
+  const [isMobileViewport, setIsMobileViewport] =
+    useState(() =>
+      window.matchMedia('(max-width: 767px)').matches
+    );
+
+  useEffect(() => {
+    const media =
+      window.matchMedia('(max-width: 767px)');
+
+    const update = () =>
+      setIsMobileViewport(media.matches);
+
+    media.addEventListener?.('change', update);
+
+    return () =>
+      media.removeEventListener?.('change', update);
+  }, []);
+
   function openMiniChat({
     userId = null,
     conversationId = null
   }) {
     if (!userId && !conversationId) {
+      return;
+    }
+
+    if (isMobileViewport) {
+      setMiniChats([]);
+      setMessageConversationId(
+        conversationId || null
+      );
+      setMessageTargetUserId(
+        conversationId ? null : userId
+      );
+      setSection('messages');
       return;
     }
 
@@ -1610,21 +1640,13 @@ function App({ session }) {
 
     setMiniChats(current => {
       const exists =
-        current.some(
-          item => item.key === key
-        );
+        current.some(item => item.key === key);
 
-      if (exists) {
-        return current;
-      }
+      if (exists) return current;
 
       return [
         ...current,
-        {
-          key,
-          userId,
-          conversationId
-        }
+        { key, userId, conversationId }
       ];
     });
   }
@@ -3488,7 +3510,33 @@ function App({ session }) {
             aria-label="Open Messages"
             title="Messages"
             onClick={() => {
-              setMessageTargetUserId(null);
+              const latestMessageNotification =
+                notifications.find(item =>
+                  !item.read_at &&
+                  (
+                    item.kind === 'message' ||
+                    item.kind === 'message_mention'
+                  )
+                );
+
+              if (latestMessageNotification) {
+                const conversationId =
+                  latestMessageNotification
+                    ?.metadata?.conversation_id || null;
+
+                const senderId =
+                  latestMessageNotification
+                    ?.metadata?.sender_id || null;
+
+                setMessageConversationId(conversationId);
+                setMessageTargetUserId(
+                  conversationId ? null : senderId
+                );
+              } else {
+                setMessageConversationId(null);
+                setMessageTargetUserId(null);
+              }
+
               setSection('messages');
               markSectionNotificationsRead('messages');
             }}
@@ -3725,7 +3773,8 @@ function App({ session }) {
             />
           )}
 
-          {miniChats.map(
+          {!isMobileViewport &&
+          miniChats.map(
             (chat, index) => (
               <MiniChat
                 key={chat.key}
@@ -3764,15 +3813,19 @@ function App({ session }) {
               onMessagesRead={() =>
                 markSectionNotificationsRead('messages')
               }
-              onOpenMiniChat={(
-                personId,
-                conversationId
-              ) => {
-                openMiniChat({
-                  userId: personId,
-                  conversationId
-                });
-              }}
+              onOpenMiniChat={
+                isMobileViewport
+                  ? null
+                  : (
+                      personId,
+                      conversationId
+                    ) => {
+                      openMiniChat({
+                        userId: personId,
+                        conversationId
+                      });
+                    }
+              }
             />
           )}
 
@@ -3913,7 +3966,8 @@ function App({ session }) {
 
       </div>
 
-      {profile.account_type !== 'employer' && (
+      {profile.account_type !== 'employer' &&
+      !isMobileViewport && (
         <div
           style={{
             position: 'fixed',
@@ -4117,6 +4171,10 @@ function App({ session }) {
             width: 30px;
             height: 30px;
           }
+        }
+
+        .mobile-chat-back {
+          display: none !important;
         }
 
         /* ===================================================
@@ -4543,14 +4601,65 @@ function App({ session }) {
           }
 
           .onstood-mini-chat-shell {
-            position: fixed !important;
-            inset: 58px 8px 82px 8px !important;
-            width: auto !important;
-            max-width: none !important;
-            height: auto !important;
-            max-height: none !important;
-            border-radius: 18px !important;
-            z-index: 30000 !important;
+            display: none !important;
+          }
+
+          .mobile-chat-back {
+            display: inline-grid !important;
+            place-items: center !important;
+            width: 36px !important;
+            height: 36px !important;
+            flex: 0 0 36px !important;
+            font-size: 20px !important;
+          }
+
+          .postoffice-layout {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+
+          .postoffice-inbox-card {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+          }
+
+          .postoffice-layout:has(.postoffice-message-scroll)
+          .postoffice-inbox-card {
+            display: none !important;
+          }
+
+          .postoffice-conversation-card {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: calc(100dvh - 150px) !important;
+            height: calc(100dvh - 150px) !important;
+            max-height: calc(100dvh - 150px) !important;
+            border-radius: 16px !important;
+            overflow: hidden !important;
+          }
+
+          .postoffice-message-scroll {
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          .postoffice-composer {
+            position: sticky !important;
+            bottom: 0 !important;
+            z-index: 20 !important;
+            background: #fff !important;
+            grid-template-columns:
+              34px 34px 34px 34px minmax(0,1fr) 38px !important;
+            gap: 5px !important;
+            padding: 8px !important;
+          }
+
+          .postoffice-composer input:not([type="file"]) {
+            min-height: 40px !important;
+            font-size: 16px !important;
           }
         }
 
@@ -13204,7 +13313,8 @@ function PostOffice({
       }
     >
 
-      {!compact && (
+      {!compact &&
+      !selectedConversation && (
         <DirectPostsPanel
           profile={profile}
           notify={notify}
@@ -13213,6 +13323,7 @@ function PostOffice({
 
 
       <div
+        className="postoffice-layout"
         style={{
           display: 'flex',
           gap: 18,
@@ -13233,7 +13344,7 @@ function PostOffice({
                 ================================================= */}
 
         <div
-          className="card"
+          className="card postoffice-inbox-card"
           style={{
             flex:
               '1 1 300px',
@@ -13667,7 +13778,7 @@ function PostOffice({
             ================================================= */}
 
         <div
-          className="card"
+          className="card postoffice-conversation-card"
           style={{
             flex:
               '3 1 520px',
@@ -13733,6 +13844,19 @@ function PostOffice({
                   gap: 12
                 }}
               >
+
+                <button
+                  type="button"
+                  className="icon-btn mobile-chat-back"
+                  onClick={() => {
+                    setSelectedConversationId(null);
+                    onConversationResolved?.(null);
+                  }}
+                  title="Back to conversations"
+                  aria-label="Back to conversations"
+                >
+                  ←
+                </button>
 
                 <Avatar
                   profile={{
@@ -14020,6 +14144,7 @@ function PostOffice({
               {/* MESSAGES */}
 
               <div
+                className="postoffice-message-scroll"
                 style={{
                   flex: 1,
                   minHeight: 0,
@@ -14437,6 +14562,7 @@ function PostOffice({
               )}
 
               <form
+                className="postoffice-composer"
                 onSubmit={
                   sendMessage
                 }
