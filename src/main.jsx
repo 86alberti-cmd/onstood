@@ -24,7 +24,7 @@ import { Auth, ResetPassword, GoogleAccountType } from './components/auth/AuthSc
 import { Calendar, Tasks, Documents } from './components/productivity/Productivity';
 import Courses from './components/learning/Courses';
 import Career from './components/career/Career';
-import SettingsPage from './components/settings/SettingsPage';
+import SettingsPage, { AdminMfaGate } from './components/settings/SettingsPage';
 import { OnlineConnections, SocialLayerPanel } from './components/social/SocialPanels';
 import AppNavigation from './components/AppNavigation';
 import {

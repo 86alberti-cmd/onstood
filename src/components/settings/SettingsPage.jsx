@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
 import { ProfileEditor } from '../profile/ProfileScreens';
 
-function AdminMfaGate({
+export function AdminMfaGate({
   profile,
   role,
   notify,
