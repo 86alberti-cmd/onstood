@@ -10,6 +10,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  Copy,
   ChevronRight,
   CircleUserRound,
   FileText,
@@ -38,7 +39,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V29.11-FLOATING-ONLINE-CHAT';
+const ONSTOOD_BUILD = 'V29.18.2-PC-TABLET-MOBILE-RESPONSIVE';
 console.log('%cOopss, only for developers!', 'font-size:28px;font-weight:900;color:#6558ff;');
 console.log('%cThis area is intended for ONSTOOD developers. Never paste code here that someone sent you — it could compromise your ONSTOOD account.', 'font-size:13px;font-weight:600;color:#64748b;');
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
@@ -391,6 +392,18 @@ function Auth({ onReady }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
+  const authBaseUrl =
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+      ? window.location.origin
+      : 'https://onstood.com';
+
+  const signupReturnUrl =
+    `${authBaseUrl}/?onstood_confirm=1`;
+
+  const recoveryReturnUrl =
+    `${authBaseUrl}/?onstood_recovery=1`;
+
 
   function setField(key, value) {
 
@@ -411,7 +424,7 @@ function Auth({ onReady }) {
           provider: 'google',
           options: {
             redirectTo:
-              window.location.origin
+              authBaseUrl
           }
         });
 
@@ -503,7 +516,7 @@ function Auth({ onReady }) {
         options: {
 
           emailRedirectTo:
-            `${window.location.origin}/confirm-signup`,
+            signupReturnUrl,
 
           data: {
             account_type:
@@ -640,7 +653,7 @@ function Auth({ onReady }) {
         form.email,
         {
           redirectTo:
-            `${window.location.origin}/reset-password`
+            recoveryReturnUrl
         }
       );
 
@@ -1214,21 +1227,11 @@ function Auth({ onReady }) {
         </form>
 
 
-        {/* GOOGLE + PASSWORD */}
+        {/* PASSWORD */}
 
         {mode === 'login' && (
 
           <>
-
-            <button
-              type="button"
-              className="btn full"
-              onClick={signInWithGoogle}
-              disabled={busy}
-            >
-              Continue with Google
-            </button>
-
 
             <button
               type="button"
@@ -1556,6 +1559,24 @@ function App({ session }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
+
+  const [globalSelectionAction, setGlobalSelectionAction] =
+    useState(null);
+
+  const [globalAiAccess, setGlobalAiAccess] =
+    useState({
+      loaded: false,
+      plan_code: 'free',
+      standard_left: 0,
+      advanced_left: 0
+    });
+
+  const [externalAiAsk, setExternalAiAsk] =
+    useState(null);
+
+  const globalSelectionToolbarRef =
+    useRef(null);
+
   const [notifications, setNotifications] = useState([]);
   const [notificationCounts, setNotificationCounts] = useState({});
   const [showNotifications, setShowNotifications] = useState(false);
@@ -1571,8 +1592,52 @@ function App({ session }) {
     useState([]);
   const [messageConversationId, setMessageConversationId] = useState(null);
   const [messageTargetUserId, setMessageTargetUserId] = useState(null);
-  const [miniChatUserId, setMiniChatUserId] = useState(null);
-  const [miniChatConversationId, setMiniChatConversationId] = useState(null);
+  const [miniChats, setMiniChats] =
+    useState([]);
+
+  function openMiniChat({
+    userId = null,
+    conversationId = null
+  }) {
+    if (!userId && !conversationId) {
+      return;
+    }
+
+    const key =
+      conversationId
+        ? `conversation:${conversationId}`
+        : `user:${userId}`;
+
+    setMiniChats(current => {
+      const exists =
+        current.some(
+          item => item.key === key
+        );
+
+      if (exists) {
+        return current;
+      }
+
+      return [
+        ...current,
+        {
+          key,
+          userId,
+          conversationId
+        }
+      ];
+    });
+  }
+
+  function closeMiniChat(
+    key
+  ) {
+    setMiniChats(current =>
+      current.filter(
+        item => item.key !== key
+      )
+    );
+  }
 
 
   const [overview, setOverview] =
@@ -2353,13 +2418,10 @@ function App({ session }) {
       const senderId =
         notification?.metadata?.sender_id || null;
 
-      setMiniChatConversationId(
+      openMiniChat({
+        userId: senderId,
         conversationId
-      );
-
-      setMiniChatUserId(
-        senderId
-      );
+      });
 
       setShowNotifications(false);
       return;
@@ -2635,6 +2697,422 @@ function App({ session }) {
       setToast('');
     }, 2600);
   }
+
+
+  function clearGlobalBrowserSelection() {
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch {}
+  }
+
+
+  async function loadGlobalAiAccess() {
+    if (!profile?.id) return;
+
+    const { data, error } =
+      await supabase.rpc('get_ai_usage');
+
+    if (error) return;
+
+    const row =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+
+    const standardLimit =
+      Number(row?.standard_limit ?? 5);
+
+    const advancedLimit =
+      Number(row?.advanced_limit ?? 0);
+
+    const standardUsed =
+      Number(row?.standard_used ?? 0);
+
+    const advancedUsed =
+      Number(row?.advanced_used ?? 0);
+
+    setGlobalAiAccess({
+      loaded: true,
+      plan_code:
+        row?.plan_code || 'free',
+      standard_left:
+        Math.max(
+          0,
+          standardLimit - standardUsed
+        ),
+      advanced_left:
+        Math.max(
+          0,
+          advancedLimit - advancedUsed
+        )
+    });
+  }
+
+
+  function openMaterialInAi(
+    materialText,
+    mode = 'standard'
+  ) {
+    const cleanText =
+      String(
+        materialText || ''
+      )
+        .trim()
+        .slice(0, 3000);
+
+    if (!cleanText) {
+      return;
+    }
+
+    const isAdvanced =
+      mode === 'advanced';
+
+    if (
+      !isAdvanced &&
+      globalAiAccess.loaded &&
+      globalAiAccess.standard_left <= 0
+    ) {
+      notify(
+        'Your standard AI allowance is finished.'
+      );
+      return;
+    }
+
+    if (
+      isAdvanced &&
+      (
+        globalAiAccess.plan_code !== 'pro' ||
+        globalAiAccess.advanced_left <= 0
+      )
+    ) {
+      notify(
+        'Advanced ONSTOOD AI is not active for this account.'
+      );
+      return;
+    }
+
+    setExternalAiAsk({
+      id:
+        `${Date.now()}-${Math.random()}`,
+      text: cleanText,
+      mode:
+        isAdvanced
+          ? 'advanced'
+          : 'standard'
+    });
+
+    setSection('ai');
+  }
+
+
+  function openGlobalSelectionInAi(
+    mode = 'standard'
+  ) {
+    const selectedText =
+      globalSelectionAction?.text;
+
+    if (!selectedText) return;
+
+    const isAdvanced =
+      mode === 'advanced';
+
+    if (
+      !isAdvanced &&
+      globalAiAccess.loaded &&
+      globalAiAccess.standard_left <= 0
+    ) {
+      notify(
+        'Your standard AI allowance is finished.'
+      );
+      return;
+    }
+
+    if (
+      isAdvanced &&
+      (
+        globalAiAccess.plan_code !== 'pro' ||
+        globalAiAccess.advanced_left <= 0
+      )
+    ) {
+      notify(
+        'Advanced ONSTOOD AI is not active for this account.'
+      );
+      return;
+    }
+
+    setExternalAiAsk({
+      id:
+        `${Date.now()}-${Math.random()}`,
+      text:
+        selectedText.slice(0, 4000),
+      mode:
+        isAdvanced
+          ? 'advanced'
+          : 'standard'
+    });
+
+    setGlobalSelectionAction(null);
+    clearGlobalBrowserSelection();
+    setSection('ai');
+  }
+
+
+  async function copyGlobalSelection() {
+    const selectedText =
+      globalSelectionAction?.text;
+
+    if (!selectedText) return;
+
+    try {
+      await navigator.clipboard.writeText(
+        selectedText
+      );
+    } catch {
+      const temp =
+        document.createElement(
+          'textarea'
+        );
+
+      temp.value =
+        selectedText;
+
+      temp.style.position =
+        'fixed';
+
+      temp.style.opacity =
+        '0';
+
+      document.body.appendChild(
+        temp
+      );
+
+      temp.select();
+      document.execCommand('copy');
+      temp.remove();
+    }
+
+    setGlobalSelectionAction(null);
+    clearGlobalBrowserSelection();
+  }
+
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    loadGlobalAiAccess();
+  }, [profile?.id]);
+
+
+  useEffect(() => {
+
+    function captureGlobalSelection() {
+      window.setTimeout(() => {
+
+        const selection =
+          window.getSelection?.();
+
+        const selectedText =
+          String(
+            selection?.toString() || ''
+          ).trim();
+
+        if (
+          !selection ||
+          selection.rangeCount === 0 ||
+          !selectedText
+        ) {
+          setGlobalSelectionAction(
+            null
+          );
+          return;
+        }
+
+        const range =
+          selection.getRangeAt(0);
+
+        const commonNode =
+          range.commonAncestorContainer;
+
+        const commonElement =
+          commonNode?.nodeType === 1
+            ? commonNode
+            : commonNode?.parentElement;
+
+        const appShell =
+          document.querySelector(
+            '.app-shell'
+          );
+
+        if (
+          !appShell ||
+          !commonElement ||
+          !appShell.contains(
+            commonElement
+          )
+        ) {
+          setGlobalSelectionAction(
+            null
+          );
+          return;
+        }
+
+        if (
+          commonElement.closest(
+            'input, textarea, [contenteditable="true"], .onstood-global-selection-toolbar'
+          )
+        ) {
+          return;
+        }
+
+        const rect =
+          range.getBoundingClientRect();
+
+        if (
+          !rect ||
+          (!rect.width &&
+            !rect.height)
+        ) {
+          setGlobalSelectionAction(
+            null
+          );
+          return;
+        }
+
+        const toolbarWidth =
+          Math.min(
+            520,
+            window.innerWidth - 20
+          );
+
+        const safeLeft =
+          Math.max(
+            10,
+            Math.min(
+              window.innerWidth -
+                toolbarWidth -
+                10,
+              rect.left +
+                rect.width / 2 -
+                toolbarWidth / 2
+            )
+          );
+
+        const preferredTop =
+          rect.top - 56;
+
+        const safeTop =
+          preferredTop >= 10
+            ? preferredTop
+            : rect.bottom + 10;
+
+        setGlobalSelectionAction({
+          text:
+            selectedText.slice(
+              0,
+              4000
+            ),
+          left:
+            safeLeft,
+          top:
+            safeTop
+        });
+      }, 0);
+    }
+
+
+    function handleGlobalPointerDown(
+      event
+    ) {
+      if (
+        globalSelectionToolbarRef.current
+          ?.contains(
+            event.target
+          )
+      ) {
+        return;
+      }
+
+      const selection =
+        window.getSelection?.();
+
+      if (
+        !selection ||
+        !String(
+          selection.toString() || ''
+        ).trim()
+      ) {
+        setGlobalSelectionAction(
+          null
+        );
+      }
+    }
+
+
+    function handleGlobalKeyDown(
+      event
+    ) {
+      if (
+        event.key === 'Escape'
+      ) {
+        setGlobalSelectionAction(
+          null
+        );
+        clearGlobalBrowserSelection();
+      }
+    }
+
+
+    document.addEventListener(
+      'mouseup',
+      captureGlobalSelection
+    );
+
+    document.addEventListener(
+      'keyup',
+      captureGlobalSelection
+    );
+
+    document.addEventListener(
+      'mousedown',
+      handleGlobalPointerDown
+    );
+
+    window.addEventListener(
+      'keydown',
+      handleGlobalKeyDown
+    );
+
+    window.addEventListener(
+      'scroll',
+      () =>
+        setGlobalSelectionAction(
+          null
+        ),
+      true
+    );
+
+    return () => {
+      document.removeEventListener(
+        'mouseup',
+        captureGlobalSelection
+      );
+
+      document.removeEventListener(
+        'keyup',
+        captureGlobalSelection
+      );
+
+      document.removeEventListener(
+        'mousedown',
+        handleGlobalPointerDown
+      );
+
+      window.removeEventListener(
+        'keydown',
+        handleGlobalKeyDown
+      );
+    };
+
+  }, []);
 
 
   if (loading) {
@@ -3224,6 +3702,12 @@ function App({ session }) {
                 overviewLoading
               }
               onOpenProfile={openMemberProfile}
+              onAskAiMaterial={
+                openMaterialInAi
+              }
+              aiAccess={
+                globalAiAccess
+              }
             />
           )}
 
@@ -3234,27 +3718,37 @@ function App({ session }) {
               onlineUserIds={onlineUserIds}
               requestedProfileId={requestedProfileId}
               onOpenChat={personId => {
-                setMiniChatConversationId(null);
-                setMiniChatUserId(
-                  personId
-                );
+                openMiniChat({
+                  userId: personId
+                });
               }}
             />
           )}
 
-          <MiniChat
-            profile={profile}
-            notify={notify}
-            targetUserId={miniChatUserId}
-            targetConversationId={
-              miniChatConversationId
-            }
-            onlineUserIds={onlineUserIds}
-            onClose={() => {
-              setMiniChatUserId(null);
-              setMiniChatConversationId(null);
-            }}
-          />
+          {miniChats.map(
+            (chat, index) => (
+              <MiniChat
+                key={chat.key}
+                profile={profile}
+                notify={notify}
+                targetUserId={
+                  chat.userId
+                }
+                targetConversationId={
+                  chat.conversationId
+                }
+                onlineUserIds={
+                  onlineUserIds
+                }
+                index={index}
+                onClose={() =>
+                  closeMiniChat(
+                    chat.key
+                  )
+                }
+              />
+            )
+          )}
 
           {section === 'messages' && (
             <PostOffice
@@ -3274,12 +3768,10 @@ function App({ session }) {
                 personId,
                 conversationId
               ) => {
-                setMiniChatUserId(
-                  personId
-                );
-                setMiniChatConversationId(
+                openMiniChat({
+                  userId: personId,
                   conversationId
-                );
+                });
               }}
             />
           )}
@@ -3320,7 +3812,18 @@ function App({ session }) {
           )}
 
           {section === 'ai' && (
-            <AI profile={profile} />
+            <AI
+              profile={profile}
+              externalAsk={
+                externalAiAsk
+              }
+              onExternalAskConsumed={() =>
+                setExternalAiAsk(null)
+              }
+              onUsageChanged={
+                loadGlobalAiAccess
+              }
+            />
           )}
 
           {section === 'admin' && (
@@ -3415,12 +3918,9 @@ function App({ session }) {
           style={{
             position: 'fixed',
             right: 18,
-            bottom: (miniChatUserId || miniChatConversationId)
-              ? 'calc(min(600px, calc(100vh - 36px)) + 28px)'
-              : 18,
+            bottom: 18,
             width: 'min(260px, calc(100vw - 24px))',
-            zIndex: 10040,
-            transition: 'bottom 180ms ease'
+            zIndex: 10040
           }}
         >
           <OnlineConnections
@@ -3428,16 +3928,805 @@ function App({ session }) {
             onlineUserIds={onlineUserIds}
             notify={notify}
             onOpenChat={personId => {
-              setMiniChatConversationId(null);
-              setMiniChatUserId(personId);
+              openMiniChat({
+                userId: personId
+              });
             }}
           />
         </div>
       )}
 
 
+      <style>{`
+        @keyframes onstoodGlobalSelectionFlow {
+          0% {
+            transform: translateX(-125%);
+            opacity: 0;
+          }
+          14% {
+            opacity: .9;
+          }
+          72% {
+            opacity: .58;
+          }
+          100% {
+            transform: translateX(250%);
+            opacity: 0;
+          }
+        }
+
+        @keyframes onstoodGlobalSelectionLed {
+          0%, 100% {
+            opacity: .5;
+            box-shadow:
+              0 0 5px rgba(96,165,250,.7),
+              0 0 11px rgba(99,102,241,.28);
+          }
+          50% {
+            opacity: 1;
+            box-shadow:
+              0 0 8px rgba(125,211,252,.95),
+              0 0 19px rgba(99,102,241,.55);
+          }
+        }
+
+        .onstood-global-selection-toolbar {
+          position: fixed;
+          z-index: 70000;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px;
+          border: 1px solid rgba(148,163,184,.28);
+          border-radius: 14px;
+          background: rgba(255,255,255,.96);
+          backdrop-filter: blur(15px);
+          box-shadow:
+            0 16px 45px rgba(15,23,42,.18),
+            inset 0 1px 0 rgba(255,255,255,.92);
+        }
+
+        .onstood-global-selection-copy {
+          width: 34px;
+          height: 34px;
+          border: 1px solid rgba(148,163,184,.28);
+          border-radius: 10px;
+          background: #fff;
+          color: #475569;
+          display: grid;
+          place-items: center;
+          cursor: pointer;
+        }
+
+        .onstood-global-selection-chip {
+          position: relative;
+          overflow: hidden;
+          isolation: isolate;
+          min-height: 34px;
+          padding: 0 11px;
+          border-radius: 10px;
+          border: 1px solid rgba(99,102,241,.30);
+          color: #fff;
+          font-size: 10px;
+          font-weight: 900;
+          letter-spacing: .35px;
+          white-space: nowrap;
+          cursor: pointer;
+          box-shadow:
+            inset 0 0 18px rgba(96,165,250,.10),
+            0 0 16px rgba(99,102,241,.18);
+          transition:
+            transform .16s ease,
+            box-shadow .16s ease,
+            opacity .16s ease;
+        }
+
+        .onstood-global-selection-chip.standard {
+          background:
+            radial-gradient(circle at 72% 50%,rgba(56,189,248,.18),transparent 35%),
+            linear-gradient(135deg,#172554,#312e81);
+        }
+
+        .onstood-global-selection-chip.advanced {
+          background:
+            radial-gradient(circle at 70% 50%,rgba(125,211,252,.22),transparent 34%),
+            linear-gradient(135deg,#09111f,#202b55);
+        }
+
+        .onstood-global-selection-chip:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow:
+            inset 0 0 20px rgba(96,165,250,.14),
+            0 0 23px rgba(99,102,241,.32);
+        }
+
+        .onstood-global-selection-chip:disabled {
+          opacity: .38;
+          cursor: default;
+          box-shadow: none;
+        }
+
+        .onstood-global-selection-flow {
+          position: absolute;
+          inset: 0 auto 0 0;
+          width: 36%;
+          z-index: 1;
+          background:
+            linear-gradient(
+              90deg,
+              transparent,
+              rgba(125,211,252,.28),
+              rgba(167,139,250,.30),
+              transparent
+            );
+          animation:
+            onstoodGlobalSelectionFlow 1.85s linear infinite;
+          pointer-events: none;
+        }
+
+        .onstood-global-selection-chip.advanced
+        .onstood-global-selection-flow {
+          animation-duration: 1.5s;
+        }
+
+        .onstood-global-selection-led {
+          position: relative;
+          z-index: 3;
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          margin-right: 7px;
+          border-radius: 999px;
+          background: #7dd3fc;
+          animation:
+            onstoodGlobalSelectionLed 1.35s ease-in-out infinite;
+          vertical-align: middle;
+        }
+
+        .onstood-global-selection-chip:disabled
+        .onstood-global-selection-flow {
+          display: none;
+        }
+
+        .onstood-global-selection-chip:disabled
+        .onstood-global-selection-led {
+          background: #64748b;
+          animation: none;
+          box-shadow: none;
+        }
+
+        .onstood-global-selection-label {
+          position: relative;
+          z-index: 4;
+        }
+
+        @media (max-width: 720px) {
+          .onstood-global-selection-toolbar {
+            max-width: calc(100vw - 16px);
+            gap: 4px;
+            padding: 5px;
+          }
+
+          .onstood-global-selection-chip {
+            padding: 0 7px;
+            font-size: 9px;
+            letter-spacing: .15px;
+          }
+
+          .onstood-global-selection-copy {
+            width: 30px;
+            height: 30px;
+          }
+        }
+
+        /* ===================================================
+           ONSTOOD RESPONSIVE FOUNDATION
+           Desktop: >= 1181px
+           Tablet browser: 768px - 1180px
+           =================================================== */
+
+        @media (min-width: 1181px) {
+          .app-grid {
+            min-width: 0;
+          }
+
+          .content,
+          .sidebar,
+          .rightbar {
+            min-width: 0;
+          }
+        }
+
+        @media (min-width: 768px) and (max-width: 1180px) {
+          html,
+          body,
+          #root {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+          }
+
+          .app-shell {
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: hidden;
+          }
+
+          .topbar {
+            width: 100%;
+            max-width: 100vw;
+            box-sizing: border-box;
+            padding-left: 14px !important;
+            padding-right: 14px !important;
+            gap: 10px !important;
+          }
+
+          .topbar .brand {
+            flex: 0 0 auto;
+          }
+
+          .global-search {
+            min-width: 0 !important;
+            flex: 1 1 260px !important;
+            max-width: none !important;
+          }
+
+          .global-search input {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+
+          .top-actions {
+            flex: 0 0 auto;
+            gap: 5px !important;
+          }
+
+          .app-grid {
+            display: grid !important;
+            grid-template-columns:
+              minmax(160px, 190px)
+              minmax(0, 1fr) !important;
+            gap: 14px !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+            box-sizing: border-box !important;
+          }
+
+          .sidebar {
+            width: auto !important;
+            min-width: 0 !important;
+            max-width: 190px !important;
+          }
+
+          .sidebar .profile-mini {
+            min-width: 0 !important;
+          }
+
+          .sidebar .profile-mini > div {
+            min-width: 0 !important;
+          }
+
+          .sidebar .profile-mini b,
+          .sidebar .profile-mini small {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .sidebar nav button {
+            min-width: 0 !important;
+            gap: 8px !important;
+            padding-left: 10px !important;
+            padding-right: 10px !important;
+          }
+
+          .sidebar nav button > span:last-of-type {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .content {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            overflow-x: hidden;
+          }
+
+          .rightbar {
+            display: none !important;
+          }
+
+          .hero,
+          .card,
+          .feed-card,
+          .post-card {
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+
+          .hero {
+            overflow: hidden;
+          }
+
+          .grid2,
+          .two-col {
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr)) !important;
+          }
+
+          .people-grid {
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr)) !important;
+          }
+
+          .page-heading {
+            gap: 12px !important;
+            flex-wrap: wrap !important;
+          }
+
+          .page-heading .search-box {
+            width: min(100%, 320px) !important;
+          }
+
+          .post-card img,
+          .post-card video {
+            max-width: 100%;
+          }
+
+          .onstood-global-selection-toolbar {
+            max-width: calc(100vw - 24px);
+          }
+
+          .onstood-mini-chat-shell {
+            max-width: min(360px, calc(100vw - 24px)) !important;
+          }
+        }
+
+        @media (min-width: 768px) and (max-width: 900px) {
+          .app-grid {
+            grid-template-columns:
+              150px minmax(0, 1fr) !important;
+            gap: 10px !important;
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+          }
+
+          .sidebar {
+            max-width: 150px !important;
+          }
+
+          .sidebar nav button {
+            font-size: 13px !important;
+          }
+
+          .sidebar .profile-mini small {
+            display: none !important;
+          }
+
+          .topbar {
+            padding-left: 10px !important;
+            padding-right: 10px !important;
+          }
+
+          .global-search input {
+            font-size: 13px !important;
+          }
+
+          .people-grid {
+            grid-template-columns:
+              minmax(0, 1fr) !important;
+          }
+
+          .grid2,
+          .two-col {
+            grid-template-columns:
+              minmax(0, 1fr) !important;
+          }
+        }
+
+
+        /* Mobile browser foundation */
+        @media (max-width: 767px) {
+          html,
+          body,
+          #root {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: hidden;
+          }
+
+          body {
+            -webkit-text-size-adjust: 100%;
+          }
+
+          .app-shell {
+            width: 100%;
+            max-width: 100vw;
+            overflow-x: hidden;
+          }
+
+          .topbar {
+            width: 100%;
+            max-width: 100vw;
+            box-sizing: border-box;
+            padding: 8px 10px !important;
+            gap: 7px !important;
+          }
+
+          .topbar .brand {
+            flex: 0 0 auto;
+            font-size: 19px !important;
+          }
+
+          .global-search {
+            min-width: 0 !important;
+            flex: 1 1 auto !important;
+            max-width: none !important;
+          }
+
+          .global-search input {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+            font-size: 13px !important;
+          }
+
+          .top-actions {
+            flex: 0 0 auto;
+            gap: 2px !important;
+          }
+
+          .top-actions .icon-btn {
+            width: 34px !important;
+            height: 34px !important;
+          }
+
+          .avatar-button {
+            width: 36px !important;
+            height: 36px !important;
+          }
+
+          .app-grid {
+            display: block !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            padding: 0 10px 88px !important;
+            box-sizing: border-box !important;
+          }
+
+          .sidebar {
+            position: fixed !important;
+            left: 8px !important;
+            right: 8px !important;
+            bottom: 8px !important;
+            top: auto !important;
+            width: auto !important;
+            max-width: none !important;
+            min-width: 0 !important;
+            height: auto !important;
+            z-index: 12000 !important;
+            padding: 6px !important;
+            border: 1px solid rgba(148,163,184,.22) !important;
+            border-radius: 18px !important;
+            background: rgba(255,255,255,.96) !important;
+            backdrop-filter: blur(18px) !important;
+            box-shadow: 0 14px 40px rgba(15,23,42,.16) !important;
+          }
+
+          .sidebar .profile-mini {
+            display: none !important;
+          }
+
+          .sidebar nav {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-around !important;
+            gap: 2px !important;
+            overflow-x: auto !important;
+            scrollbar-width: none;
+          }
+
+          .sidebar nav::-webkit-scrollbar {
+            display: none;
+          }
+
+          .sidebar nav button {
+            flex: 0 0 52px !important;
+            width: 52px !important;
+            min-width: 52px !important;
+            height: 48px !important;
+            padding: 0 !important;
+            display: grid !important;
+            place-items: center !important;
+            border-radius: 13px !important;
+          }
+
+          .sidebar nav button > span:not(.nav-badge),
+          .sidebar nav button small {
+            display: none !important;
+          }
+
+          .sidebar nav button svg {
+            margin: 0 !important;
+          }
+
+          .sidebar > button:last-child {
+            display: none !important;
+          }
+
+          .content {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+          }
+
+          .rightbar {
+            display: none !important;
+          }
+
+          .hero,
+          .card,
+          .feed-card,
+          .post-card {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+
+          .hero {
+            padding: 18px !important;
+            border-radius: 18px !important;
+            overflow: hidden !important;
+          }
+
+          .hero h1 {
+            font-size: clamp(25px, 8vw, 34px) !important;
+            line-height: 1.06 !important;
+          }
+
+          .page-heading {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+          }
+
+          .page-heading .search-box,
+          .search-box {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+
+          .grid2,
+          .two-col,
+          .people-grid {
+            grid-template-columns: minmax(0, 1fr) !important;
+          }
+
+          .post-card img,
+          .post-card video,
+          .card img,
+          .card video {
+            max-width: 100% !important;
+            height: auto;
+          }
+
+          input,
+          textarea,
+          select,
+          button {
+            max-width: 100%;
+            box-sizing: border-box;
+          }
+
+          textarea {
+            resize: vertical;
+          }
+
+          .onstood-global-selection-toolbar {
+            left: 8px !important;
+            right: 8px !important;
+            width: auto !important;
+            max-width: calc(100vw - 16px) !important;
+            justify-content: center !important;
+            overflow-x: auto !important;
+          }
+
+          .onstood-global-selection-chip {
+            min-width: max-content;
+          }
+
+          .onstood-mini-chat-shell {
+            position: fixed !important;
+            inset: 58px 8px 82px 8px !important;
+            width: auto !important;
+            max-width: none !important;
+            height: auto !important;
+            max-height: none !important;
+            border-radius: 18px !important;
+            z-index: 30000 !important;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .topbar {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+          }
+
+          .topbar .brand {
+            font-size: 17px !important;
+          }
+
+          .global-search {
+            flex-basis: 120px !important;
+          }
+
+          .top-actions .icon-btn {
+            width: 31px !important;
+            height: 31px !important;
+          }
+
+          .app-grid {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+          }
+
+          .hero {
+            padding: 15px !important;
+          }
+
+          .hero .btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .global-search {
+            display: none !important;
+          }
+
+          .topbar {
+            justify-content: space-between !important;
+          }
+        }
+
+        @media (max-width: 767px) and (orientation: landscape) {
+          .sidebar {
+            left: 12px !important;
+            right: 12px !important;
+          }
+
+          .onstood-mini-chat-shell {
+            inset: 48px 10px 70px 10px !important;
+          }
+
+          .hero {
+            padding-top: 14px !important;
+            padding-bottom: 14px !important;
+          }
+        }
+      `}</style>
+
+
+      {globalSelectionAction && (
+        <div
+          ref={
+            globalSelectionToolbarRef
+          }
+          className="onstood-global-selection-toolbar"
+          style={{
+            left:
+              globalSelectionAction.left,
+            top:
+              globalSelectionAction.top
+          }}
+          onMouseDown={event =>
+            event.preventDefault()
+          }
+        >
+          <button
+            type="button"
+            className="onstood-global-selection-copy"
+            onClick={
+              copyGlobalSelection
+            }
+            title="Copy"
+          >
+            <Copy size={15} />
+          </button>
+
+          <button
+            type="button"
+            className="onstood-global-selection-chip standard"
+            disabled={
+              globalAiAccess.loaded &&
+              globalAiAccess.standard_left <= 0
+            }
+            onClick={() =>
+              openGlobalSelectionInAi(
+                'standard'
+              )
+            }
+            title="Ask ONSTOOD AI about selected text"
+          >
+            <span className="onstood-global-selection-flow" />
+            <span className="onstood-global-selection-led" />
+            <span className="onstood-global-selection-label">
+              ASK ONSTOOD AI
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="onstood-global-selection-chip advanced"
+            disabled={
+              !globalAiAccess.loaded ||
+              globalAiAccess.plan_code !== 'pro' ||
+              globalAiAccess.advanced_left <= 0
+            }
+            onClick={() =>
+              openGlobalSelectionInAi(
+                'advanced'
+              )
+            }
+            title={
+              globalAiAccess.plan_code === 'pro'
+                ? 'Ask Advanced ONSTOOD AI about selected text'
+                : 'Advanced AI requires ONSTOOD PRO'
+            }
+          >
+            <span className="onstood-global-selection-flow" />
+            <span className="onstood-global-selection-led" />
+            <span className="onstood-global-selection-label">
+              ASK ADVANCED ONSTOOD AI
+            </span>
+          </button>
+        </div>
+      )}
+
+
       {toast && (
-        <div className="toast">
+        <div
+          className="toast"
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            top: 14,
+            bottom: 'auto',
+            left: '50%',
+            right: 'auto',
+            transform: 'translateX(-50%)',
+            zIndex: 50000,
+            width: 'max-content',
+            maxWidth: 'min(88vw, 440px)',
+            height: 'auto',
+            minHeight: 0,
+            maxHeight: 'none',
+            padding: '9px 13px',
+            margin: 0,
+            borderRadius: 10,
+            background: 'rgba(15, 23, 42, 0.96)',
+            color: '#fff',
+            boxShadow: '0 10px 28px rgba(15,23,42,.24)',
+            fontSize: 13,
+            lineHeight: 1.35,
+            fontWeight: 700,
+            textAlign: 'center',
+            whiteSpace: 'normal',
+            pointerEvents: 'none',
+            display: 'block',
+            inset: 'auto auto auto 50%'
+          }}
+        >
           {toast}
         </div>
       )}
@@ -3457,7 +4746,9 @@ function HomePage({
   notify,
   overview,
   overviewLoading,
-  onOpenProfile
+  onOpenProfile,
+  onAskAiMaterial,
+  aiAccess
 }) {
 
   const [posts, setPosts] = useState([]);
@@ -3473,6 +4764,31 @@ function HomePage({
   const [mailTarget, setMailTarget] = useState(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState('');
   const [shareBusy, setShareBusy] = useState(false);
+
+  const [postFiles, setPostFiles] = useState([]);
+  const [postAudience, setPostAudience] = useState('public');
+  const [publishing, setPublishing] = useState(false);
+
+  const [
+    openAiSuggestedPostId,
+    setOpenAiSuggestedPostId
+  ] = useState(null);
+
+  const [
+    localAiInterestTokens,
+    setLocalAiInterestTokens
+  ] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem(
+          `onstood_ai_interests_${profile?.id || 'guest'}`
+        ) || '{}'
+      );
+    } catch {
+      return {};
+    }
+  });
+
 
 
   async function loadConnections() {
@@ -3555,10 +4871,20 @@ function HomePage({
         user_id,
         audience,
         shared_from_post_id,
+        post_media (
+          id,
+          media_type,
+          storage_path,
+          mime_type,
+          caption,
+          sort_order,
+          created_at
+        ),
         profiles!posts_user_id_fkey (
           name,
           surname,
           university,
+          degree,
           avatar_url
         )
       `)
@@ -3576,7 +4902,30 @@ function HomePage({
       return;
     }
 
-    const rows = data || [];
+    const rows = await Promise.all(
+      (data || []).map(async item => {
+        const signedMedia = await Promise.all(
+          (item.post_media || [])
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+            .map(async media => {
+              const { data: signed } = await supabase.storage
+                .from('post-media')
+                .createSignedUrl(media.storage_path, 60 * 60);
+
+              return {
+                ...media,
+                signed_url: signed?.signedUrl || null
+              };
+            })
+        );
+
+        return {
+          ...item,
+          post_media: signedMedia
+        };
+      })
+    );
+
     setPosts(rows);
 
     const ids =
@@ -3674,29 +5023,185 @@ function HomePage({
   async function publish() {
 
     const body = text.trim();
+    const files = Array.from(postFiles || []);
 
-    if (!body) {
+    if (!body && files.length === 0) {
+      notify('Write something or add a photo/video.');
       return;
     }
 
-    const {
-      data,
-      error
-    } = await supabase
+    if (!['public', 'connections', 'only_me'].includes(postAudience)) {
+      notify('Choose who can see this post.');
+      return;
+    }
+
+    const oversized = files.find(file => file.size > 50 * 1024 * 1024);
+    if (oversized) {
+      notify('Each photo/video must be smaller than 50 MB.');
+      return;
+    }
+
+    const invalid = files.find(file =>
+      !(file.type?.startsWith('image/') || file.type?.startsWith('video/'))
+    );
+    if (invalid) {
+      notify('Only photos and videos can be attached.');
+      return;
+    }
+
+    setPublishing(true);
+
+    let createdPost = null;
+    const uploadedPaths = [];
+
+    try {
+      const {
+        data,
+        error
+      } = await supabase
+        .from('posts')
+        .insert({
+          user_id: profile.id,
+          body,
+          audience: postAudience
+        })
+        .select(`
+          id,
+          body,
+          created_at,
+          user_id,
+          audience,
+          shared_from_post_id
+        `)
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      createdPost = data;
+
+      const mediaRows = [];
+
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const originalExt =
+          (file.name.split('.').pop() || '').toLowerCase();
+
+        const ext =
+          originalExt ||
+          (file.type?.startsWith('video/') ? 'mp4' : 'jpg');
+
+        const path =
+          `${profile.id}/${data.id}/${crypto.randomUUID()}.${ext}`;
+
+        const { error: uploadError } =
+          await supabase.storage
+            .from('post-media')
+            .upload(path, file, {
+              contentType: file.type,
+              upsert: false,
+              cacheControl: '3600'
+            });
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        uploadedPaths.push(path);
+
+        const mediaType =
+          file.type?.startsWith('video/')
+            ? 'video'
+            : 'image';
+
+        const { data: mediaData, error: mediaError } =
+          await supabase
+            .from('post_media')
+            .insert({
+              post_id: data.id,
+              owner_id: profile.id,
+              media_type: mediaType,
+              storage_path: path,
+              mime_type: file.type || null,
+              sort_order: index
+            })
+            .select('*')
+            .single();
+
+        if (mediaError) {
+          throw mediaError;
+        }
+
+        const { data: signed } =
+          await supabase.storage
+            .from('post-media')
+            .createSignedUrl(path, 60 * 60);
+
+        mediaRows.push({
+          ...mediaData,
+          signed_url: signed?.signedUrl || null
+        });
+      }
+
+      setPosts(current => [
+        {
+          ...data,
+          profiles: profile,
+          post_media: mediaRows
+        },
+        ...current
+      ]);
+
+      setText('');
+      setPostFiles([]);
+      setPostAudience('public');
+
+      const input =
+        document.getElementById('onstood-post-media-input');
+      if (input) {
+        input.value = '';
+      }
+
+      notify('Post published.');
+
+    } catch (error) {
+
+      if (uploadedPaths.length) {
+        await supabase.storage
+          .from('post-media')
+          .remove(uploadedPaths);
+      }
+
+      if (createdPost?.id) {
+        await supabase
+          .from('posts')
+          .delete()
+          .eq('id', createdPost.id)
+          .eq('user_id', profile.id);
+      }
+
+      notify(
+        error?.message ||
+        'Could not publish the post.'
+      );
+
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function changePostAudience(postId, audience) {
+    if (!['public', 'connections', 'only_me'].includes(audience)) {
+      return;
+    }
+
+    const { data, error } = await supabase
       .from('posts')
-      .insert({
-        user_id: profile.id,
-        body,
-        audience: 'public'
-      })
-      .select(`
-        id,
-        body,
-        created_at,
-        user_id,
-        audience,
-        shared_from_post_id
-      `)
+      .update({ audience })
+      .eq('id', postId)
+      .eq('user_id', profile.id)
+      .select('id,audience')
       .single();
 
     if (error) {
@@ -3704,16 +5209,15 @@ function HomePage({
       return;
     }
 
-    setPosts(current => [
-      {
-        ...data,
-        profiles: profile
-      },
-      ...current
-    ]);
+    setPosts(current =>
+      current.map(item =>
+        item.id === postId
+          ? { ...item, audience: data.audience }
+          : item
+      )
+    );
 
-    setText('');
-    notify('Post published.');
+    notify('Post privacy updated.');
   }
 
 
@@ -3999,6 +5503,20 @@ function HomePage({
     postId
   ) {
 
+    const post =
+      posts.find(item => item.id === postId);
+
+    const mediaPaths =
+      (post?.post_media || [])
+        .map(item => item.storage_path)
+        .filter(Boolean);
+
+    if (mediaPaths.length) {
+      await supabase.storage
+        .from('post-media')
+        .remove(mediaPaths);
+    }
+
     const {
       error
     } = await supabase
@@ -4020,6 +5538,399 @@ function HomePage({
 
     notify('Post deleted.');
   }
+
+
+  function extractInterestTokens(
+    value
+  ) {
+    return String(value || '')
+      .toLowerCase()
+      .split(
+        /[^a-zA-ZÀ-ž0-9]+/
+      )
+      .filter(token =>
+        token.length >= 4
+      )
+      .slice(0, 24);
+  }
+
+
+  function rememberAiInterest(
+    post,
+    weight = 1
+  ) {
+    const tokens =
+      extractInterestTokens(
+        [
+          post?.body,
+          post?.profiles?.university,
+          post?.profiles?.degree
+        ]
+          .filter(Boolean)
+          .join(' ')
+      );
+
+    if (!tokens.length) {
+      return;
+    }
+
+    setLocalAiInterestTokens(
+      current => {
+        const next = {
+          ...current
+        };
+
+        for (const token of tokens) {
+          next[token] =
+            Math.min(
+              12,
+              Number(
+                next[token] || 0
+              ) + weight
+            );
+        }
+
+        const trimmed =
+          Object.fromEntries(
+            Object.entries(next)
+              .sort(
+                (a, b) =>
+                  b[1] - a[1]
+              )
+              .slice(0, 80)
+          );
+
+        try {
+          localStorage.setItem(
+            `onstood_ai_interests_${profile?.id || 'guest'}`,
+            JSON.stringify(
+              trimmed
+            )
+          );
+        } catch {}
+
+        return trimmed;
+      }
+    );
+  }
+
+
+  function suggestionReason(
+    post
+  ) {
+    const profileUniversity =
+      String(
+        profile?.university || ''
+      ).trim();
+
+    const postUniversity =
+      String(
+        post?.profiles?.university ||
+        ''
+      ).trim();
+
+    if (
+      profileUniversity &&
+      postUniversity &&
+      profileUniversity.toLowerCase() ===
+        postUniversity.toLowerCase()
+    ) {
+      return `Popular in ${profileUniversity}`;
+    }
+
+    const degree =
+      String(
+        profile?.degree ||
+        profile?.faculty ||
+        ''
+      ).trim();
+
+    if (
+      degree &&
+      String(
+        post?.body || ''
+      )
+        .toLowerCase()
+        .includes(
+          degree.toLowerCase()
+        )
+    ) {
+      return `Relevant to your ${degree} studies`;
+    }
+
+    const tokens =
+      extractInterestTokens(
+        post?.body
+      );
+
+    const learnedMatch =
+      tokens.find(
+        token =>
+          Number(
+            localAiInterestTokens[
+              token
+            ] || 0
+          ) >= 2
+      );
+
+    if (learnedMatch) {
+      return `Related to topics you explore on ONSTOOD`;
+    }
+
+    if (
+      connections.some(
+        person =>
+          person.id ===
+          post?.user_id
+      )
+    ) {
+      return 'From your student network';
+    }
+
+    return 'Relevant to your studies';
+  }
+
+
+  function personalizationTokens() {
+    return [
+      profile?.university,
+      profile?.faculty,
+      profile?.degree,
+      profile?.city
+    ]
+      .filter(Boolean)
+      .flatMap(value =>
+        String(value)
+          .toLowerCase()
+          .split(
+            /[^a-zA-ZÀ-ž0-9]+/
+          )
+      )
+      .filter(token =>
+        token.length >= 3
+      );
+  }
+
+
+  function scoreSuggestedPost(
+    post
+  ) {
+    let score = 0;
+
+    const body =
+      String(
+        post?.body || ''
+      ).toLowerCase();
+
+    const authorUniversity =
+      String(
+        post?.profiles?.university ||
+        ''
+      ).toLowerCase();
+
+    const authorDegree =
+      String(
+        post?.profiles?.degree ||
+        ''
+      ).toLowerCase();
+
+    const tokens =
+      personalizationTokens();
+
+    for (const token of tokens) {
+      if (body.includes(token)) {
+        score += 3;
+      }
+
+      if (
+        authorUniversity.includes(
+          token
+        )
+      ) {
+        score += 2;
+      }
+
+      if (
+        authorDegree.includes(
+          token
+        )
+      ) {
+        score += 2;
+      }
+    }
+
+    for (
+      const [
+        token,
+        interestWeight
+      ] of Object.entries(
+        localAiInterestTokens
+      )
+    ) {
+      if (
+        body.includes(token)
+      ) {
+        score +=
+          Math.min(
+            4,
+            Number(
+              interestWeight || 0
+            ) * 0.45
+          );
+      }
+    }
+
+    if (
+      connections.some(
+        person =>
+          person.id ===
+          post?.user_id
+      )
+    ) {
+      score += 5;
+    }
+
+    if (
+      post?.user_id ===
+      profile.id
+    ) {
+      score -= 7;
+    }
+
+    const ageHours =
+      Math.max(
+        0,
+        (
+          Date.now() -
+          new Date(
+            post?.created_at || 0
+          ).getTime()
+        ) /
+        3600000
+      );
+
+    score += Math.max(
+      0,
+      3 - ageHours / 72
+    );
+
+    score += Math.min(
+      1.25,
+      Number(
+        likes[post?.id] || 0
+      ) * 0.12 +
+      Number(
+        comments[
+          post?.id
+        ]?.length || 0
+      ) * 0.18
+    );
+
+    return score;
+  }
+
+
+  function buildPersonalizedFeed() {
+    if (!posts.length) {
+      return [];
+    }
+
+    if (posts.length < 10) {
+      return posts.map(post => ({
+        type: 'post',
+        post
+      }));
+    }
+
+    const ranked =
+      [...posts]
+        .sort(
+          (a, b) =>
+            scoreSuggestedPost(b) -
+            scoreSuggestedPost(a)
+        );
+
+    const suggestedIds =
+      new Set();
+
+    const result = [];
+    let regularCount = 0;
+
+    for (const post of posts) {
+      if (
+        suggestedIds.has(post.id)
+      ) {
+        continue;
+      }
+
+      result.push({
+        type: 'post',
+        post
+      });
+
+      regularCount += 1;
+
+      if (regularCount % 9 === 0) {
+        const candidate =
+          ranked.find(item =>
+            !suggestedIds.has(
+              item.id
+            ) &&
+            item.id !== post.id &&
+            !result.some(
+              feedItem =>
+                feedItem.post?.id ===
+                item.id
+            )
+          );
+
+        if (candidate) {
+          suggestedIds.add(
+            candidate.id
+          );
+
+          result.push({
+            type: 'ai_suggestion',
+            post: candidate
+          });
+        }
+      }
+    }
+
+    return result;
+  }
+
+
+  function aiMaterialText(
+    post
+  ) {
+    const author =
+      `${
+        post?.profiles?.name || ''
+      } ${
+        post?.profiles?.surname || ''
+      }`.trim();
+
+    const body =
+      String(
+        post?.body || ''
+      )
+        .trim()
+        .slice(0, 2600);
+
+    return [
+      author
+        ? `ONSTOOD post by ${author}`
+        : 'ONSTOOD post',
+      body
+    ]
+      .filter(Boolean)
+      .join('\\n\\n');
+  }
+
+
+  const personalizedFeed =
+    buildPersonalizedFeed();
 
 
   return (
@@ -4116,27 +6027,133 @@ function HomePage({
       </div>
 
 
-      <div className="feed-card card">
-        <div className="composer">
+      <div
+        className="feed-card card"
+        style={{
+          padding: 14
+        }}
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'auto minmax(0,1fr) auto',
+            gap: 10,
+            alignItems: 'start'
+          }}
+        >
           <Avatar profile={profile} />
 
           <textarea
             name="new-post"
-            placeholder="Share a question, idea or useful resource…"
+            placeholder="Share a question, idea, photo or video…"
             value={text}
             onChange={event =>
               setText(
                 event.target.value
               )
             }
+            style={{
+              width: '100%',
+              minHeight: 68,
+              maxHeight: 120,
+              margin: 0,
+              resize: 'vertical',
+              borderRadius: 12,
+              padding: '12px 14px'
+            }}
           />
+
+          <label
+            title="Choose one or more photos/videos"
+            style={{
+              height: 46,
+              padding: '0 14px',
+              border: '1px solid #dfe3ec',
+              borderRadius: 12,
+              background: '#fff',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 7,
+              cursor: 'pointer',
+              fontWeight: 800,
+              whiteSpace: 'nowrap',
+              alignSelf: 'center'
+            }}
+          >
+            <Paperclip size={15} />
+            {postFiles.length > 0
+              ? `${postFiles.length} selected`
+              : 'Photo / Video'}
+
+            <input
+              id="onstood-post-media-input"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
+              multiple
+              hidden
+              onChange={event =>
+                setPostFiles(
+                  Array.from(
+                    event.target.files || []
+                  )
+                )
+              }
+            />
+          </label>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginTop: 10,
+            paddingLeft: 46
+          }}
+        >
+          <select
+            value={postAudience}
+            onChange={event =>
+              setPostAudience(
+                event.target.value
+              )
+            }
+            title="Who can see this post?"
+            style={{
+              width: 138,
+              minWidth: 138,
+              height: 42,
+              margin: 0,
+              padding: '0 32px 0 12px',
+              borderRadius: 10,
+              fontSize: 14,
+              lineHeight: 1.2
+            }}
+          >
+            <option value="public">
+              Public
+            </option>
+            <option value="connections">
+              Connections
+            </option>
+            <option value="only_me">
+              Only me
+            </option>
+          </select>
 
           <button
             className="btn primary"
             onClick={publish}
+            disabled={publishing}
+            style={{
+              height: 42,
+              margin: 0,
+              padding: '0 16px'
+            }}
           >
             <Send size={16} />
-            Post
+            {publishing ? 'Posting…' : 'Post'}
           </button>
         </div>
       </div>
@@ -4157,55 +6174,353 @@ function HomePage({
           </p>
         </div>
       ) : (
-        posts.map(post => (
-          <Post
-            key={post.id}
-            post={post}
-            profile={profile}
-            likeCount={
-              likes[post.id] || 0
+        personalizedFeed.map(
+          (feedItem, index) => {
+
+            const post =
+              feedItem.post;
+
+            if (
+              feedItem.type ===
+              'ai_suggestion'
+            ) {
+              const opened =
+                openAiSuggestedPostId ===
+                post.id;
+
+              const standardDisabled =
+                Boolean(
+                  aiAccess?.loaded &&
+                  aiAccess.standard_left <= 0
+                );
+
+              const advancedDisabled =
+                Boolean(
+                  !aiAccess?.loaded ||
+                  aiAccess.plan_code !== 'pro' ||
+                  aiAccess.advanced_left <= 0
+                );
+
+              return (
+                <div
+                  key={`ai-suggested-${post.id}-${index}`}
+                  className="card"
+                  onClick={() => {
+                    const willOpen =
+                      openAiSuggestedPostId !==
+                      post.id;
+
+                    setOpenAiSuggestedPostId(
+                      willOpen
+                        ? post.id
+                        : null
+                    );
+
+                    if (willOpen) {
+                      rememberAiInterest(
+                        post,
+                        1
+                      );
+                    }
+                  }}
+                  style={{
+                    position: 'relative',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    border:
+                      '1px solid rgba(99,102,241,.18)',
+                    background:
+                      'linear-gradient(135deg,rgba(15,23,42,.965),rgba(30,41,59,.94))',
+                    color: '#fff',
+                    boxShadow:
+                      '0 14px 38px rgba(15,23,42,.18), inset 0 0 42px rgba(99,102,241,.08)',
+                    padding: 16
+                  }}
+                  title="Anything on ONSTOOD can become a question"
+                >
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      pointerEvents:
+                        'none',
+                      background:
+                        'radial-gradient(circle at 80% 30%,rgba(99,102,241,.18),transparent 34%)'
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      position: 'relative',
+                      zIndex: 2
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems:
+                          'center',
+                        gap: 8,
+                        marginBottom: 10
+                      }}
+                    >
+                      <Sparkles
+                        size={14}
+                      />
+
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 900,
+                          letterSpacing:
+                            '1.05px'
+                        }}
+                      >
+                        SUGGESTED BY ONSTOOD AI
+                      </span>
+
+                      <span
+                        style={{
+                          marginLeft:
+                            'auto',
+                          fontSize: 10,
+                          opacity: .68,
+                          textAlign:
+                            'right'
+                        }}
+                        title="Why ONSTOOD suggested this"
+                      >
+                        {suggestionReason(
+                          post
+                        )}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 10,
+                        alignItems:
+                          'center'
+                      }}
+                    >
+                      <Avatar
+                        profile={{
+                          ...post.profiles,
+                          id:
+                            post.user_id
+                        }}
+                      />
+
+                      <div
+                        style={{
+                          minWidth: 0
+                        }}
+                      >
+                        <b
+                          style={{
+                            display:
+                              'block'
+                          }}
+                        >
+                          {post.profiles
+                            ?.name ||
+                            'Student'}{' '}
+                          {post.profiles
+                            ?.surname ||
+                            ''}
+                        </b>
+
+                        <small
+                          style={{
+                            opacity: .66
+                          }}
+                        >
+                          {post.profiles
+                            ?.university ||
+                            'ONSTOOD'}
+                        </small>
+                      </div>
+                    </div>
+
+                    <p
+                      style={{
+                        margin:
+                          '12px 0 0',
+                        lineHeight: 1.55,
+                        opacity: .9,
+                        display:
+                          '-webkit-box',
+                        WebkitLineClamp:
+                          opened ? 5 : 3,
+                        WebkitBoxOrient:
+                          'vertical',
+                        overflow:
+                          'hidden'
+                      }}
+                    >
+                      {post.body}
+                    </p>
+
+                    {!opened && (
+                      <small
+                        style={{
+                          display:
+                            'block',
+                          marginTop: 10,
+                          opacity: .55
+                        }}
+                      >
+                        Click to explore with ONSTOOD AI
+                      </small>
+                    )}
+
+                    {opened && (
+                      <div
+                        onClick={event =>
+                          event.stopPropagation()
+                        }
+                        style={{
+                          display: 'flex',
+                          gap: 7,
+                          alignItems:
+                            'center',
+                          flexWrap: 'wrap',
+                          marginTop: 13,
+                          paddingTop: 12,
+                          borderTop:
+                            '1px solid rgba(255,255,255,.11)'
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="onstood-global-selection-chip standard"
+                          disabled={
+                            standardDisabled
+                          }
+                          onClick={() => {
+                            rememberAiInterest(
+                              post,
+                              3
+                            );
+
+                            onAskAiMaterial?.(
+                              aiMaterialText(
+                                post
+                              ),
+                              'standard'
+                            );
+                          }}
+                          title="Ask ONSTOOD AI to explain this post"
+                        >
+                          <span className="onstood-global-selection-flow" />
+                          <span className="onstood-global-selection-led" />
+                          <span className="onstood-global-selection-label">
+                            ASK ONSTOOD AI
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className="onstood-global-selection-chip advanced"
+                          disabled={
+                            advancedDisabled
+                          }
+                          onClick={() => {
+                            rememberAiInterest(
+                              post,
+                              3
+                            );
+
+                            onAskAiMaterial?.(
+                              aiMaterialText(
+                                post
+                              ),
+                              'advanced'
+                            );
+                          }}
+                          title={
+                            aiAccess?.plan_code ===
+                            'pro'
+                              ? 'Ask Advanced ONSTOOD AI to explain this post'
+                              : 'Advanced AI requires ONSTOOD PRO'
+                          }
+                        >
+                          <span className="onstood-global-selection-flow" />
+                          <span className="onstood-global-selection-led" />
+                          <span className="onstood-global-selection-label">
+                            ASK ADVANCED ONSTOOD AI
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
             }
-            liked={
-              Boolean(
-                likedByMe[post.id]
-              )
-            }
-            comments={
-              comments[post.id] || []
-            }
-            shareCount={
-              shares[post.id] || 0
-            }
-            commentValue={
-              commentText[post.id] || ''
-            }
-            setCommentValue={value =>
-              setCommentText(
-                current => ({
-                  ...current,
-                  [post.id]: value
-                })
-              )
-            }
-            onLike={() =>
-              toggleLike(post.id)
-            }
-            onComment={() =>
-              addComment(post.id)
-            }
-            onShare={() =>
-              setShareTarget(post)
-            }
-            onPostOffice={() => {
-              setMailTarget(post);
-              setSelectedConnectionId('');
-            }}
-            onDelete={() =>
-              deletePost(post.id)
-            }
-            onOpenProfile={() => onOpenProfile?.(post.user_id)}
-          />
-        ))
+
+            return (
+              <Post
+                key={post.id}
+                post={post}
+                profile={profile}
+                likeCount={
+                  likes[post.id] || 0
+                }
+                liked={
+                  Boolean(
+                    likedByMe[post.id]
+                  )
+                }
+                comments={
+                  comments[post.id] || []
+                }
+                shareCount={
+                  shares[post.id] || 0
+                }
+                commentValue={
+                  commentText[post.id] || ''
+                }
+                setCommentValue={value =>
+                  setCommentText(
+                    current => ({
+                      ...current,
+                      [post.id]: value
+                    })
+                  )
+                }
+                onLike={() =>
+                  toggleLike(post.id)
+                }
+                onComment={() =>
+                  addComment(post.id)
+                }
+                onShare={() =>
+                  setShareTarget(post)
+                }
+                onPostOffice={() => {
+                  setMailTarget(post);
+                  setSelectedConnectionId('');
+                }}
+                onDelete={() =>
+                  deletePost(post.id)
+                }
+                onOpenProfile={() =>
+                  onOpenProfile?.(
+                    post.user_id
+                  )
+                }
+                onAudienceChange={audience =>
+                  changePostAudience(
+                    post.id,
+                    audience
+                  )
+                }
+              />
+            );
+          }
+        )
       )}
 
 
@@ -4482,11 +6797,22 @@ function Post({
   onShare,
   onPostOffice,
   onDelete,
-  onOpenProfile
+  onOpenProfile,
+  onAudienceChange
 }) {
 
   const author =
     post.profiles || {};
+
+  const [mediaViewer, setMediaViewer] =
+    useState(null);
+
+  const [commentsOpen, setCommentsOpen] =
+    useState(false);
+
+  const media =
+    (post.post_media || [])
+      .filter(item => item.signed_url);
 
   return (
     <article className="card post-card">
@@ -4521,21 +6847,281 @@ function Post({
 
         {post.user_id ===
           profile.id && (
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onDelete}
-            title="Delete post"
+          <div
+            style={{
+              display: 'flex',
+              gap: 6,
+              alignItems: 'center'
+            }}
           >
-            <Trash2 size={15} />
-          </button>
+            <select
+              value={post.audience || 'public'}
+              onChange={event =>
+                onAudienceChange?.(
+                  event.target.value
+                )
+              }
+              title="Post privacy"
+              style={{
+                width: 'auto',
+                minWidth: 118,
+                padding: '6px 8px'
+              }}
+            >
+              <option value="public">
+                Public
+              </option>
+              <option value="connections">
+                Connections
+              </option>
+              <option value="only_me">
+                Only me
+              </option>
+            </select>
+
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={onDelete}
+              title="Delete post"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
         )}
       </div>
 
 
-      <p className="post-body">
-        {post.body}
-      </p>
+      {post.body && (
+        <p className="post-body">
+          {post.body}
+        </p>
+      )}
+
+      {media.length > 0 && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns:
+              media.length === 1
+                ? '1fr'
+                : 'repeat(2, minmax(0, 1fr))',
+            gap: 7,
+            marginTop: post.body ? 10 : 4,
+            borderRadius: 14,
+            overflow: 'hidden'
+          }}
+        >
+          {media.slice(0, 4).map((item, index) => {
+            const more =
+              index === 3 &&
+              media.length > 4;
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() =>
+                  setMediaViewer({
+                    items: media,
+                    index
+                  })
+                }
+                style={{
+                  position: 'relative',
+                  border: 0,
+                  padding: 0,
+                  background: '#0f172a',
+                  cursor: 'zoom-in',
+                  minHeight:
+                    media.length === 1
+                      ? 260
+                      : 180,
+                  maxHeight:
+                    media.length === 1
+                      ? 520
+                      : 320,
+                  overflow: 'hidden'
+                }}
+              >
+                {item.media_type === 'video' ? (
+                  <video
+                    src={item.signed_url}
+                    muted
+                    preload="metadata"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      minHeight: 'inherit',
+                      objectFit: 'cover',
+                      display: 'block'
+                    }}
+                  />
+                ) : (
+                  <img
+                    src={item.signed_url}
+                    alt="Post media"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      minHeight: 'inherit',
+                      objectFit: 'cover',
+                      display: 'block'
+                    }}
+                  />
+                )}
+
+                {more && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'grid',
+                      placeItems: 'center',
+                      background:
+                        'rgba(15,23,42,.58)',
+                      color: '#fff',
+                      fontSize: 28,
+                      fontWeight: 800
+                    }}
+                  >
+                    +{media.length - 4}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {mediaViewer && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() =>
+            setMediaViewer(null)
+          }
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 30000,
+            background:
+              'rgba(3,7,18,.92)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 24
+          }}
+        >
+          {(() => {
+            const item =
+              mediaViewer.items[
+                mediaViewer.index
+              ];
+
+            if (!item) return null;
+
+            return (
+              <div
+                onClick={event =>
+                  event.stopPropagation()
+                }
+                style={{
+                  position: 'relative',
+                  maxWidth: '94vw',
+                  maxHeight: '90vh'
+                }}
+              >
+                {item.media_type === 'video' ? (
+                  <video
+                    src={item.signed_url}
+                    controls
+                    autoPlay
+                    style={{
+                      maxWidth: '94vw',
+                      maxHeight: '86vh',
+                      borderRadius: 14
+                    }}
+                  />
+                ) : (
+                  <img
+                    src={item.signed_url}
+                    alt="Post media"
+                    style={{
+                      maxWidth: '94vw',
+                      maxHeight: '86vh',
+                      objectFit: 'contain',
+                      borderRadius: 14
+                    }}
+                  />
+                )}
+
+                {mediaViewer.items.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() =>
+                        setMediaViewer(current => ({
+                          ...current,
+                          index:
+                            (current.index - 1 +
+                              current.items.length) %
+                            current.items.length
+                        }))
+                      }
+                      style={{
+                        position: 'fixed',
+                        left: 20,
+                        top: '50%',
+                        background: '#fff'
+                      }}
+                    >
+                      ‹
+                    </button>
+
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() =>
+                        setMediaViewer(current => ({
+                          ...current,
+                          index:
+                            (current.index + 1) %
+                            current.items.length
+                        }))
+                      }
+                      style={{
+                        position: 'fixed',
+                        right: 20,
+                        top: '50%',
+                        background: '#fff'
+                      }}
+                    >
+                      ›
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() =>
+              setMediaViewer(null)
+            }
+            style={{
+              position: 'fixed',
+              right: 20,
+              top: 20,
+              background: '#fff'
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+      )}
 
 
       <div className="post-actions">
@@ -4552,7 +7138,24 @@ function Post({
           {likeCount}
         </button>
 
-        <button>
+        <button
+          type="button"
+          onClick={() =>
+            setCommentsOpen(
+              current => !current
+            )
+          }
+          aria-expanded={
+            commentsOpen
+          }
+          title={
+            commentsOpen
+              ? 'Hide comments'
+              : comments.length > 0
+                ? 'Show comments'
+                : 'Write a comment'
+          }
+        >
           <MessageCircle size={16} />
           {comments.length}
         </button>
@@ -4576,15 +7179,27 @@ function Post({
       </div>
 
 
-      <div
-        style={{
-          display: 'grid',
-          gap: 8,
-          marginTop: 12
-        }}
-      >
+      {commentsOpen && (
+        <div
+          style={{
+            display: 'grid',
+            gap: 8,
+            marginTop: 12
+          }}
+        >
 
-        {comments.map(comment => (
+          {!comments.length && (
+            <small
+              className="muted"
+              style={{
+                padding: '2px 1px'
+              }}
+            >
+              No comments yet. Start the conversation.
+            </small>
+          )}
+
+          {comments.map(comment => (
           <div
             key={comment.id}
             style={{
@@ -4672,7 +7287,8 @@ function Post({
           </button>
         </div>
 
-      </div>
+        </div>
+      )}
 
     </article>
   );
@@ -4949,61 +7565,514 @@ function OnlineConnections({
    ========================================================= */
 
 
-function ProfileAlbumsView({ person }) {
-  const [albums,setAlbums]=useState([]);
-  const [photosByAlbum,setPhotosByAlbum]=useState({});
-  const [largePhoto,setLargePhoto]=useState(null);
+function ProfileMediaGallery({
+  person,
+  type = 'image'
+}) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [viewer, setViewer] = useState(null);
 
-  useEffect(()=>{
-    let cancelled=false;
-    async function load(){
-      if(!person?.id) return;
-      const [{data:albumRows,error:albumError},{data:photoRows,error:photoError}]=await Promise.all([
-        supabase.from('photo_albums').select('*').eq('owner_id',person.id).order('created_at',{ascending:false}),
-        supabase.from('photos').select('*').eq('owner_id',person.id).order('created_at',{ascending:false})
+  useEffect(() => {
+    let active = true;
+
+    async function load() {
+      if (!person?.id) {
+        setItems([]);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+
+      const [
+        mediaResult,
+        avatarResult
+      ] = await Promise.all([
+        supabase
+          .from('post_media')
+          .select(`
+            id,
+            post_id,
+            owner_id,
+            media_type,
+            storage_path,
+            mime_type,
+            sort_order,
+            created_at,
+            posts!post_media_post_id_fkey (
+              id,
+              body,
+              audience,
+              created_at,
+              user_id
+            )
+          `)
+          .eq('owner_id', person.id)
+          .eq('media_type', type)
+          .order('created_at', {
+            ascending: false
+          }),
+
+        type === 'image'
+          ? supabase
+              .from('profile_picture_history')
+              .select(`
+                id,
+                user_id,
+                storage_path,
+                visibility,
+                created_at
+              `)
+              .eq('user_id', person.id)
+              .order('created_at', {
+                ascending: false
+              })
+          : Promise.resolve({
+              data: [],
+              error: null
+            })
       ]);
-      if(cancelled) return;
-      if(albumError){ console.error('Album read error:',albumError); setAlbums([]); return; }
-      if(photoError){ console.error('Photo read error:',photoError); }
-      const visibleAlbums=albumRows||[];
-      const signed=await Promise.all((photoRows||[]).map(async photo=>{
-        const {data,error}=await supabase.storage.from('profile-photos').createSignedUrl(photo.storage_path,3600);
-        if(error) console.error('Photo URL error:',error);
-        return {...photo,signed_url:data?.signedUrl||null};
-      }));
-      if(cancelled) return;
-      const grouped={}; signed.forEach(p=>{(grouped[p.album_id] ||= []).push(p)});
-      setAlbums(visibleAlbums); setPhotosByAlbum(grouped);
-    }
-    load();
-    return()=>{cancelled=true};
-  },[person?.id]);
 
-  if(!albums.length) return null;
-  return <div className="card" style={{marginTop:18}}>
-    <div className="card-head"><div><h3>Photos & albums</h3><small className="muted">Albums visible to you according to privacy.</small></div><FolderOpen size={18}/></div>
-    <div style={{display:'grid',gap:14}}>
-      {albums.map(a=><div key={a.id} style={{paddingTop:4}}>
-        <div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'baseline',marginBottom:8}}>
-          <b>{a.title}</b><small className="muted">{(photosByAlbum[a.id]||[]).length} photo{(photosByAlbum[a.id]||[]).length===1?'':'s'}</small>
+      if (!active) return;
+
+      if (mediaResult.error) {
+        console.error(
+          'Profile media error:',
+          mediaResult.error
+        );
+      }
+
+      if (avatarResult.error) {
+        console.error(
+          'Profile picture history error:',
+          avatarResult.error
+        );
+      }
+
+      const postMedia = await Promise.all(
+        (mediaResult.data || []).map(
+          async item => {
+            const { data } =
+              await supabase.storage
+                .from('post-media')
+                .createSignedUrl(
+                  item.storage_path,
+                  60 * 60
+                );
+
+            return {
+              ...item,
+              source: 'post',
+              signed_url:
+                data?.signedUrl || null
+            };
+          }
+        )
+      );
+
+      const avatars = await Promise.all(
+        (avatarResult.data || []).map(
+          async item => {
+            const { data } =
+              await supabase.storage
+                .from('avatars')
+                .createSignedUrl(
+                  item.storage_path,
+                  60 * 60
+                );
+
+            return {
+              ...item,
+              media_type: 'image',
+              source: 'profile_picture',
+              signed_url:
+                data?.signedUrl || null
+            };
+          }
+        )
+      );
+
+      if (!active) return;
+
+      const merged = [
+        ...postMedia,
+        ...avatars
+      ]
+        .filter(item => item.signed_url)
+        .sort(
+          (a, b) =>
+            new Date(b.created_at) -
+            new Date(a.created_at)
+        );
+
+      setItems(merged);
+      setLoading(false);
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
+  }, [person?.id, type]);
+
+  if (loading) {
+    return (
+      <div className="empty compact">
+        Loading {type === 'video' ? 'videos' : 'photos'}…
+      </div>
+    );
+  }
+
+  if (!items.length) {
+    return (
+      <div className="empty compact">
+        No {type === 'video' ? 'videos' : 'photos'} to show.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns:
+            'repeat(auto-fill,minmax(145px,1fr))',
+          gap: 8
+        }}
+      >
+        {items.map((item, index) => (
+          <button
+            key={`${item.source}-${item.id}`}
+            type="button"
+            onClick={() =>
+              setViewer({
+                items,
+                index
+              })
+            }
+            style={{
+              border: 0,
+              padding: 0,
+              aspectRatio: '1 / 1',
+              overflow: 'hidden',
+              borderRadius: 12,
+              background: '#0f172a',
+              cursor: 'zoom-in',
+              position: 'relative'
+            }}
+          >
+            {item.media_type === 'video' ? (
+              <video
+                src={item.signed_url}
+                muted
+                preload="metadata"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block'
+                }}
+              />
+            ) : (
+              <img
+                src={item.signed_url}
+                alt={
+                  item.source ===
+                  'profile_picture'
+                    ? 'Profile picture'
+                    : 'Photo'
+                }
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: 'block'
+                }}
+              />
+            )}
+
+            {item.source ===
+              'profile_picture' && (
+              <span
+                style={{
+                  position: 'absolute',
+                  left: 7,
+                  bottom: 7,
+                  padding: '4px 7px',
+                  borderRadius: 999,
+                  background:
+                    'rgba(15,23,42,.78)',
+                  color: '#fff',
+                  fontSize: 11,
+                  fontWeight: 700
+                }}
+              >
+                Profile picture
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {viewer && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setViewer(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 30000,
+            background:
+              'rgba(3,7,18,.92)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 24
+          }}
+        >
+          {(() => {
+            const item =
+              viewer.items[viewer.index];
+
+            if (!item) return null;
+
+            return item.media_type ===
+              'video' ? (
+              <video
+                src={item.signed_url}
+                controls
+                autoPlay
+                onClick={event =>
+                  event.stopPropagation()
+                }
+                style={{
+                  maxWidth: '94vw',
+                  maxHeight: '86vh',
+                  borderRadius: 14
+                }}
+              />
+            ) : (
+              <img
+                src={item.signed_url}
+                alt="Media"
+                onClick={event =>
+                  event.stopPropagation()
+                }
+                style={{
+                  maxWidth: '94vw',
+                  maxHeight: '86vh',
+                  objectFit: 'contain',
+                  borderRadius: 14
+                }}
+              />
+            );
+          })()}
+
+          {viewer.items.length > 1 && (
+            <>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={event => {
+                  event.stopPropagation();
+                  setViewer(current => ({
+                    ...current,
+                    index:
+                      (current.index - 1 +
+                        current.items.length) %
+                      current.items.length
+                  }));
+                }}
+                style={{
+                  position: 'fixed',
+                  left: 20,
+                  top: '50%',
+                  background: '#fff'
+                }}
+              >
+                ‹
+              </button>
+
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={event => {
+                  event.stopPropagation();
+                  setViewer(current => ({
+                    ...current,
+                    index:
+                      (current.index + 1) %
+                      current.items.length
+                  }));
+                }}
+                style={{
+                  position: 'fixed',
+                  right: 20,
+                  top: '50%',
+                  background: '#fff'
+                }}
+              >
+                ›
+              </button>
+            </>
+          )}
+
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setViewer(null)}
+            style={{
+              position: 'fixed',
+              right: 20,
+              top: 20,
+              background: '#fff'
+            }}
+          >
+            <X size={20} />
+          </button>
         </div>
-        {(photosByAlbum[a.id]||[]).length===0 ? <div className="muted">No visible photos in this album.</div> :
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8}}>
-            {(photosByAlbum[a.id]||[]).map(photo=><button key={photo.id} type="button" onClick={()=>setLargePhoto(photo)}
-              style={{border:0,padding:0,cursor:'zoom-in',aspectRatio:'1/1',overflow:'hidden',borderRadius:12,background:'#eef1f7'}}>
-              {photo.signed_url&&<img src={photo.signed_url} alt={a.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/>}
-            </button>)}
-          </div>}
-      </div>)}
-    </div>
-    {largePhoto?.signed_url&&<div role="dialog" aria-modal="true" onClick={()=>setLargePhoto(null)}
-      style={{position:'fixed',inset:0,zIndex:12000,background:'rgba(7,10,20,.88)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,cursor:'zoom-out'}}>
-      <img src={largePhoto.signed_url} alt="Photo" onClick={e=>e.stopPropagation()}
-        style={{maxWidth:'94vw',maxHeight:'90vh',objectFit:'contain',borderRadius:14,boxShadow:'0 25px 80px rgba(0,0,0,.45)'}}/>
-      <button className="icon-btn" onClick={()=>setLargePhoto(null)} style={{position:'fixed',right:24,top:24,background:'white'}}><X size={20}/></button>
-    </div>}
-  </div>;
+      )}
+    </>
+  );
 }
+
+
+function ProfileContentTabs({
+  viewer,
+  person,
+  connectionStatus,
+  notify,
+  onImageClick
+}) {
+  const [tab, setTab] =
+    useState('timeline');
+
+  return (
+    <div
+      className="card"
+      style={{
+        marginTop: 18
+      }}
+    >
+      <div
+        className="tabs"
+        style={{
+          display: 'flex',
+          gap: 7,
+          padding: 5,
+          width: 'fit-content',
+          border: '1px solid rgba(148,163,184,.22)',
+          borderRadius: 13,
+          background: 'linear-gradient(180deg,#ffffff 0%,#f8fafc 100%)',
+          boxShadow: '0 1px 2px rgba(15,23,42,.05), inset 0 1px 0 rgba(255,255,255,.9)'
+        }}
+      >
+        <button
+          type="button"
+          className={
+            tab === 'timeline'
+              ? 'active'
+              : ''
+          }
+          onClick={() =>
+            setTab('timeline')
+          }
+          style={{
+            borderRadius: 9,
+            border: '1px solid rgba(148,163,184,.18)',
+            boxShadow: tab === 'timeline'
+              ? '0 3px 8px rgba(79,70,229,.16), inset 0 1px 0 rgba(255,255,255,.7)'
+              : '0 1px 2px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.9)',
+            transform: tab === 'timeline' ? 'translateY(-1px)' : 'none',
+            transition: 'transform .16s ease, box-shadow .16s ease'
+          }}
+        >
+          Onstream
+        </button>
+
+        <button
+          type="button"
+          className={
+            tab === 'photos'
+              ? 'active'
+              : ''
+          }
+          onClick={() =>
+            setTab('photos')
+          }
+          style={{
+            borderRadius: 9,
+            border: '1px solid rgba(148,163,184,.18)',
+            boxShadow: tab === 'photos'
+              ? '0 3px 8px rgba(79,70,229,.16), inset 0 1px 0 rgba(255,255,255,.7)'
+              : '0 1px 2px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.9)',
+            transform: tab === 'photos' ? 'translateY(-1px)' : 'none',
+            transition: 'transform .16s ease, box-shadow .16s ease'
+          }}
+        >
+          Photos
+        </button>
+
+        <button
+          type="button"
+          className={
+            tab === 'videos'
+              ? 'active'
+              : ''
+          }
+          onClick={() =>
+            setTab('videos')
+          }
+          style={{
+            borderRadius: 9,
+            border: '1px solid rgba(148,163,184,.18)',
+            boxShadow: tab === 'videos'
+              ? '0 3px 8px rgba(79,70,229,.16), inset 0 1px 0 rgba(255,255,255,.7)'
+              : '0 1px 2px rgba(15,23,42,.06), inset 0 1px 0 rgba(255,255,255,.9)',
+            transform: tab === 'videos' ? 'translateY(-1px)' : 'none',
+            transition: 'transform .16s ease, box-shadow .16s ease'
+          }}
+        >
+          Videos
+        </button>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        {tab === 'timeline' && (
+          <ProfileTimeline
+            viewer={viewer}
+            person={person}
+            connectionStatus={
+              connectionStatus
+            }
+            notify={notify}
+            onImageClick={
+              onImageClick
+            }
+          />
+        )}
+
+        {tab === 'photos' && (
+          <ProfileMediaGallery
+            person={person}
+            type="image"
+          />
+        )}
+
+        {tab === 'videos' && (
+          <ProfileMediaGallery
+            person={person}
+            type="video"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function ProfileTimeline({
   viewer,
@@ -5050,7 +8119,15 @@ function ProfileTimeline({
             created_at,
             user_id,
             audience,
-            shared_from_post_id
+            shared_from_post_id,
+            post_media (
+              id,
+              media_type,
+              storage_path,
+              mime_type,
+              sort_order,
+              created_at
+            )
           `)
           .eq(
             'user_id',
@@ -5111,8 +8188,48 @@ function ProfileTimeline({
       }
 
 
+      const signedPosts =
+        await Promise.all(
+          (postsResult.data || []).map(
+            async post => {
+              const signedMedia =
+                await Promise.all(
+                  (post.post_media || [])
+                    .sort(
+                      (a, b) =>
+                        (a.sort_order || 0) -
+                        (b.sort_order || 0)
+                    )
+                    .map(async media => {
+                      const { data } =
+                        await supabase.storage
+                          .from('post-media')
+                          .createSignedUrl(
+                            media.storage_path,
+                            60 * 60
+                          );
+
+                      return {
+                        ...media,
+                        signed_url:
+                          data?.signedUrl ||
+                          null
+                      };
+                    })
+                );
+
+              return {
+                ...post,
+                post_media:
+                  signedMedia
+              };
+            }
+          )
+        );
+
+
       const posts =
-        (postsResult.data || []).map(
+        signedPosts.map(
           post => ({
             kind: 'post',
             id: `post-${post.id}`,
@@ -5224,7 +8341,7 @@ function ProfileTimeline({
           marginTop: 16
         }}
       >
-        Loading timeline…
+        Loading Onstream…
       </div>
     );
 
@@ -5246,7 +8363,7 @@ function ProfileTimeline({
 
         <div>
           <span className="eyebrow dark">
-            TIMELINE
+            ONSTREAM
           </span>
 
           <h3
@@ -5273,7 +8390,7 @@ function ProfileTimeline({
       {items.length === 0 ? (
 
         <div className="empty compact">
-          No timeline items are visible to you.
+          No Onstream items are visible to you.
         </div>
 
       ) : (
@@ -5353,7 +8470,10 @@ function ProfileTimeline({
                             post.audience ===
                             'connections'
                               ? 'Connections'
-                              : 'Public'
+                              : post.audience ===
+                                  'only_me'
+                                ? 'Only me'
+                                : 'Public'
                           }
                         </small>
                       </div>
@@ -5368,15 +8488,88 @@ function ProfileTimeline({
                   </div>
 
 
-                  <p
-                    style={{
-                      whiteSpace:
-                        'pre-wrap',
-                      marginBottom: 0
-                    }}
-                  >
-                    {post.body}
-                  </p>
+                  {post.body && (
+                    <p
+                      style={{
+                        whiteSpace:
+                          'pre-wrap',
+                        marginBottom:
+                          (post.post_media || []).length
+                            ? 12
+                            : 0
+                      }}
+                    >
+                      {post.body}
+                    </p>
+                  )}
+
+                  {(post.post_media || [])
+                    .filter(media => media.signed_url)
+                    .length > 0 && (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns:
+                          (post.post_media || []).length === 1
+                            ? '1fr'
+                            : 'repeat(2,minmax(0,1fr))',
+                        gap: 7,
+                        borderRadius: 12,
+                        overflow: 'hidden'
+                      }}
+                    >
+                      {(post.post_media || [])
+                        .filter(media => media.signed_url)
+                        .slice(0, 4)
+                        .map(media => (
+                          <div
+                            key={media.id}
+                            style={{
+                              minHeight: 150,
+                              maxHeight: 300,
+                              background: '#0f172a',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {media.media_type === 'video' ? (
+                              <video
+                                src={media.signed_url}
+                                controls
+                                preload="metadata"
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  minHeight: 150,
+                                  objectFit: 'cover',
+                                  display: 'block'
+                                }}
+                              />
+                            ) : (
+                              <img
+                                src={media.signed_url}
+                                alt="Post photo"
+                                onClick={() =>
+                                  onImageClick?.(
+                                    media.signed_url
+                                  )
+                                }
+                                style={{
+                                  width: '100%',
+                                  height: '100%',
+                                  minHeight: 150,
+                                  objectFit: 'cover',
+                                  display: 'block',
+                                  cursor:
+                                    onImageClick
+                                      ? 'zoom-in'
+                                      : 'default'
+                                }}
+                              />
+                            )}
+                          </div>
+                        ))}
+                    </div>
+                  )}
 
 
                   {post.shared_from_post_id && (
@@ -6217,7 +9410,7 @@ function Friends({
             zIndex: 2
           }}
         >
-          Close
+          ← Back to Network
         </button>
 
 
@@ -6537,9 +9730,7 @@ function Friends({
         </div>
 
 
-        <ProfileAlbumsView person={person} />
-
-        <ProfileTimeline
+        <ProfileContentTabs
           viewer={profile}
           person={person}
           connectionStatus={status}
@@ -6563,25 +9754,41 @@ function Friends({
   return (
 
     <Page
-      eyebrow="NETWORK"
-      title="Students & connections"
+      eyebrow={
+        selectedPerson
+          ? 'STUDENT PROFILE'
+          : 'NETWORK'
+      }
+      title={
+        selectedPerson
+          ? `${
+              selectedPerson.name ||
+              'Student'
+            } ${
+              selectedPerson.surname ||
+              ''
+            }`.trim()
+          : 'Students & connections'
+      }
 
       action={
+        !selectedPerson
+          ? (
+            <div className="search-box">
 
-        <div className="search-box">
+              <Search size={16} />
 
-          <Search size={16} />
+              <input
+                placeholder="Find a student…"
+                value={q}
+                onChange={e =>
+                  setQ(e.target.value)
+                }
+              />
 
-          <input
-            placeholder="Find a student…"
-            value={q}
-            onChange={e =>
-              setQ(e.target.value)
-            }
-          />
-
-        </div>
-
+            </div>
+          )
+          : null
       }
     >
 
@@ -6763,6 +9970,8 @@ function Friends({
       )}
 
 
+      {!selectedPerson && (
+        <>
       {/* =====================================================
           CONNECTION REQUESTS
           ===================================================== */}
@@ -7064,6 +10273,10 @@ function Friends({
         )}
 
       </section>
+
+
+        </>
+      )}
 
 
       {/* =====================================================
@@ -8141,6 +11354,31 @@ function PostOffice({
   const [deleteChoiceMessage, setDeleteChoiceMessage] =
     useState(null);
 
+  const [inboxTab, setInboxTab] =
+    useState('chats');
+
+  const [conversationMenuOpen, setConversationMenuOpen] =
+    useState(false);
+
+  const [emojiOpen, setEmojiOpen] =
+    useState(false);
+
+  const [gifOpen, setGifOpen] =
+    useState(false);
+
+  const [gifUrl, setGifUrl] =
+    useState('');
+
+  const [reportOpen, setReportOpen] =
+    useState(false);
+
+  const [reportCategory, setReportCategory] =
+    useState('harassment');
+
+  const [reportDetails, setReportDetails] =
+    useState('');
+
+
   const selectedConversation =
     conversations.find(item =>
       item.conversation_id === selectedConversationId
@@ -8174,6 +11412,13 @@ function PostOffice({
         });
     });
   }
+
+
+  useEffect(() => {
+    setConversationMenuOpen(false);
+    setEmojiOpen(false);
+    setGifOpen(false);
+  }, [selectedConversationId]);
 
 
   useEffect(() => {
@@ -8216,24 +11461,117 @@ function PostOffice({
 
   async function loadConversations() {
 
-    const {
-      data,
-      error
-    } = await supabase
-      .rpc('list_my_conversations');
+    const [
+      conversationsResult,
+      preferencesResult,
+      membershipResult,
+      labelsResult
+    ] = await Promise.all([
+      supabase.rpc('list_my_conversations'),
 
-    if (error) {
-      notify(error.message);
+      supabase
+        .from('conversation_preferences')
+        .select(`
+          conversation_id,
+          inbox_bucket,
+          starred,
+          archived,
+          label
+        `)
+        .eq('user_id', profile.id),
+
+      supabase
+        .from('conversation_members')
+        .select(`
+          conversation_id,
+          muted
+        `)
+        .eq('user_id', profile.id),
+
+      supabase
+        .from('conversation_labels')
+        .select(`
+          conversation_id,
+          label
+        `)
+        .eq('user_id', profile.id)
+    ]);
+
+    if (conversationsResult.error) {
+      notify(
+        conversationsResult.error.message
+      );
       return [];
     }
 
-    const rows = data || [];
+    const preferenceMap =
+      Object.fromEntries(
+        (preferencesResult.data || [])
+          .map(item => [
+            item.conversation_id,
+            item
+          ])
+      );
+
+    const membershipMap =
+      Object.fromEntries(
+        (membershipResult.data || [])
+          .map(item => [
+            item.conversation_id,
+            item
+          ])
+      );
+
+    const labelsMap = {};
+    for (const item of labelsResult.data || []) {
+      if (!labelsMap[item.conversation_id]) {
+        labelsMap[item.conversation_id] = [];
+      }
+      labelsMap[item.conversation_id].push(item.label);
+    }
+
+    const rows =
+      (conversationsResult.data || [])
+        .map(item => ({
+          ...item,
+          inbox_bucket:
+            preferenceMap[
+              item.conversation_id
+            ]?.inbox_bucket ||
+            'chats',
+          starred:
+            Boolean(
+              preferenceMap[
+                item.conversation_id
+              ]?.starred
+            ),
+          archived:
+            Boolean(
+              preferenceMap[
+                item.conversation_id
+              ]?.archived
+            ),
+          label:
+            preferenceMap[
+              item.conversation_id
+            ]?.label ||
+            null,
+          labels:
+            labelsMap[
+              item.conversation_id
+            ] || [],
+          muted:
+            Boolean(
+              membershipMap[
+                item.conversation_id
+              ]?.muted
+            )
+        }));
 
     setConversations(rows);
 
     return rows;
   }
-
 
   async function loadContacts() {
 
@@ -9235,6 +12573,487 @@ function PostOffice({
   }
 
 
+  async function saveConversationPreference(
+    conversationId,
+    patch
+  ) {
+
+    if (!conversationId) {
+      return;
+    }
+
+    const current =
+      conversations.find(
+        item =>
+          item.conversation_id ===
+          conversationId
+      ) || {};
+
+    const payload = {
+      conversation_id:
+        conversationId,
+      user_id:
+        profile.id,
+      inbox_bucket:
+        patch.inbox_bucket ??
+        current.inbox_bucket ??
+        'chats',
+      starred:
+        patch.starred ??
+        Boolean(current.starred),
+      archived:
+        patch.archived ??
+        Boolean(current.archived),
+      label:
+        patch.label !== undefined
+          ? patch.label
+          : current.label || null,
+      updated_at:
+        new Date().toISOString()
+    };
+
+    const { error } =
+      await supabase
+        .from(
+          'conversation_preferences'
+        )
+        .upsert(
+          payload,
+          {
+            onConflict:
+              'conversation_id,user_id'
+          }
+        );
+
+    if (error) {
+      notify(error.message);
+      return false;
+    }
+
+    setConversations(currentRows =>
+      currentRows.map(item =>
+        item.conversation_id ===
+        conversationId
+          ? {
+              ...item,
+              ...payload
+            }
+          : item
+      )
+    );
+
+    return true;
+  }
+
+
+  async function toggleConversationStar() {
+
+    if (!selectedConversation) {
+      return;
+    }
+
+    const next =
+      !selectedConversation.starred;
+
+    if (
+      await saveConversationPreference(
+        selectedConversationId,
+        {
+          starred: next
+        }
+      )
+    ) {
+      notify(
+        next
+          ? 'Conversation starred.'
+          : 'Conversation unstarred.'
+      );
+    }
+
+    setConversationMenuOpen(false);
+  }
+
+
+  async function toggleConversationMute() {
+
+    if (!selectedConversationId) {
+      return;
+    }
+
+    const next =
+      !selectedConversation?.muted;
+
+    const { error } =
+      await supabase
+        .from('conversation_members')
+        .update({
+          muted: next
+        })
+        .eq(
+          'conversation_id',
+          selectedConversationId
+        )
+        .eq(
+          'user_id',
+          profile.id
+        );
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConversations(currentRows =>
+      currentRows.map(item =>
+        item.conversation_id ===
+        selectedConversationId
+          ? {
+              ...item,
+              muted: next
+            }
+          : item
+      )
+    );
+
+    notify(
+      next
+        ? 'Conversation muted.'
+        : 'Conversation unmuted.'
+    );
+
+    setConversationMenuOpen(false);
+  }
+
+
+  async function markConversationUnread() {
+
+    if (!selectedConversationId) {
+      return;
+    }
+
+    const lastAt =
+      selectedConversation
+        ?.last_message_at;
+
+    const unreadFrom =
+      lastAt
+        ? new Date(
+            new Date(
+              lastAt
+            ).getTime() - 1
+          ).toISOString()
+        : null;
+
+    const { error } =
+      await supabase
+        .from('conversation_members')
+        .update({
+          last_read_at:
+            unreadFrom
+        })
+        .eq(
+          'conversation_id',
+          selectedConversationId
+        )
+        .eq(
+          'user_id',
+          profile.id
+        );
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConversations(currentRows =>
+      currentRows.map(item =>
+        item.conversation_id ===
+        selectedConversationId
+          ? {
+              ...item,
+              my_last_read_at:
+                unreadFrom,
+              unread_count:
+                Math.max(
+                  1,
+                  Number(
+                    item.unread_count ||
+                    0
+                  )
+                )
+            }
+          : item
+      )
+    );
+
+    notify(
+      'Conversation marked unread.'
+    );
+
+    setConversationMenuOpen(false);
+  }
+
+
+  async function setConversationBucket(
+    bucket
+  ) {
+
+    if (
+      !selectedConversationId ||
+      !['chats', 'requests']
+        .includes(bucket)
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabase.rpc(
+        'set_conversation_inbox_bucket',
+        {
+          p_conversation_id:
+            selectedConversationId,
+          p_bucket: bucket
+        }
+      );
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConversations(currentRows =>
+      currentRows.map(item =>
+        item.conversation_id ===
+        selectedConversationId
+          ? {
+              ...item,
+              inbox_bucket: bucket,
+              archived: false
+            }
+          : item
+      )
+    );
+
+    notify(
+      bucket === 'requests'
+        ? 'Moved to Requests.'
+        : 'Moved to Chats.'
+    );
+
+    setInboxTab(bucket);
+    setConversationMenuOpen(false);
+  }
+
+  async function toggleConversationLabel(
+    label
+  ) {
+
+    if (!selectedConversationId) {
+      return;
+    }
+
+    const currentLabels =
+      selectedConversation?.labels || [];
+
+    const enabled =
+      !currentLabels.includes(label);
+
+    const { error } =
+      await supabase.rpc(
+        'set_conversation_label',
+        {
+          p_conversation_id:
+            selectedConversationId,
+          p_label: label,
+          p_enabled: enabled
+        }
+      );
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConversations(currentRows =>
+      currentRows.map(item => {
+        if (
+          item.conversation_id !==
+          selectedConversationId
+        ) {
+          return item;
+        }
+
+        const labels =
+          item.labels || [];
+
+        return {
+          ...item,
+          labels: enabled
+            ? [
+                ...new Set([
+                  ...labels,
+                  label
+                ])
+              ]
+            : labels.filter(
+                itemLabel =>
+                  itemLabel !== label
+              )
+        };
+      })
+    );
+
+    notify(
+      enabled
+        ? `${label} label added.`
+        : `${label} label removed.`
+    );
+  }
+
+  function reportConversation() {
+    if (
+      !selectedConversationId ||
+      !otherUserId
+    ) {
+      return;
+    }
+
+    setReportCategory(
+      'harassment'
+    );
+    setReportDetails('');
+    setReportOpen(true);
+    setConversationMenuOpen(false);
+  }
+
+
+  async function submitConversationReport() {
+
+    if (
+      !selectedConversationId ||
+      !otherUserId
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from('moderation_reports')
+        .insert({
+          reporter_user_id:
+            profile.id,
+          target_type:
+            'conversation',
+          target_id:
+            selectedConversationId,
+          category:
+            reportCategory,
+          details:
+            reportDetails.trim() ||
+            `Conversation reported from ONSTOOD Messages. Reported user: ${otherUserId}.`
+        });
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setReportOpen(false);
+    setReportDetails('');
+
+    notify(
+      'Report sent to ONSTOOD moderation.'
+    );
+  }
+
+
+  function addEmoji(
+    emoji
+  ) {
+    setText(current =>
+      `${current}${emoji}`
+    );
+    setEmojiOpen(false);
+    window.requestAnimationFrame(
+      () =>
+        messageInputRef.current
+          ?.focus()
+    );
+  }
+
+
+  async function sendGif() {
+
+    const url =
+      gifUrl.trim();
+
+    if (
+      !selectedConversationId ||
+      !isOtherOnline ||
+      !url
+    ) {
+      return;
+    }
+
+    let parsed;
+
+    try {
+      parsed =
+        new URL(url);
+    } catch {
+      notify(
+        'Paste a valid GIF URL.'
+      );
+      return;
+    }
+
+    if (
+      parsed.protocol !== 'https:'
+    ) {
+      notify(
+        'GIF links must use HTTPS.'
+      );
+      return;
+    }
+
+    setSending(true);
+
+    const {
+      data,
+      error
+    } = await supabase
+      .from('messages')
+      .insert({
+        conversation_id:
+          selectedConversationId,
+        sender_id:
+          profile.id,
+        body: '',
+        message_type:
+          'gif',
+        metadata: {
+          url
+        }
+      })
+      .select()
+      .single();
+
+    if (error) {
+      notify(error.message);
+    } else {
+      setMessages(current => [
+        ...current,
+        data
+      ]);
+      setGifUrl('');
+      setGifOpen(false);
+      await loadConversations();
+    }
+
+    setSending(false);
+  }
+
+
   async function deleteConversationForMe() {
 
     if (!selectedConversationId) {
@@ -9281,20 +13100,50 @@ function PostOffice({
     search.trim().toLowerCase();
 
   const filteredConversations =
-    conversations.filter(item => {
+    conversations
+      .filter(item =>
+        !item.archived &&
+        item.inbox_bucket ===
+          inboxTab
+      )
+      .filter(item => {
 
-      const haystack =
-        `
-        ${item.other_name || ''}
-        ${item.other_surname || ''}
-        ${item.other_university || ''}
-        ${item.last_message_body || ''}
-        `.toLowerCase();
+        const haystack =
+          `
+          ${item.other_name || ''}
+          ${item.other_surname || ''}
+          ${item.other_university || ''}
+          ${item.last_message_body || ''}
+          ${item.label || ''}
+          `.toLowerCase();
 
-      return haystack.includes(
-        searchText
-      );
-    });
+        return haystack.includes(
+          searchText
+        );
+      })
+      .sort((a, b) => {
+        if (
+          Boolean(a.starred) !==
+          Boolean(b.starred)
+        ) {
+          return a.starred
+            ? -1
+            : 1;
+        }
+
+        return (
+          new Date(
+            b.last_message_at ||
+            b.updated_at ||
+            0
+          ) -
+          new Date(
+            a.last_message_at ||
+            a.updated_at ||
+            0
+          )
+        );
+      });
 
   const conversationUserIds =
     new Set(
@@ -9417,6 +13266,49 @@ function PostOffice({
               </div>
             </div>
 
+          </div>
+
+
+          <div
+            style={{
+              display: 'flex',
+              gap: 6,
+              marginBottom: 10
+            }}
+          >
+            <button
+              type="button"
+              className={
+                inboxTab === 'chats'
+                  ? 'btn primary'
+                  : 'btn subtle'
+              }
+              onClick={() =>
+                setInboxTab('chats')
+              }
+              style={{
+                padding: '7px 10px'
+              }}
+            >
+              Chats
+            </button>
+
+            <button
+              type="button"
+              className={
+                inboxTab === 'requests'
+                  ? 'btn primary'
+                  : 'btn subtle'
+              }
+              onClick={() =>
+                setInboxTab('requests')
+              }
+              style={{
+                padding: '7px 10px'
+              }}
+            >
+              Requests
+            </button>
           </div>
 
 
@@ -9585,10 +13477,16 @@ function PostOffice({
                                 'nowrap'
                             }}
                           >
+                            {item.starred
+                              ? '★ '
+                              : ''}
                             {item.other_name ||
                               'Student'}{' '}
                             {item.other_surname ||
                               ''}
+                            {item.muted
+                              ? ' · 🔕'
+                              : ''}
                           </b>
 
                           {Number(
@@ -9646,12 +13544,18 @@ function PostOffice({
                               'nowrap'
                           }}
                         >
+                          {(item.labels || []).length
+                            ? `${item.labels.join(' · ')} · `
+                            : ''}
                           {item.last_message_type ===
                           'file'
                             ? '📎 Attachment'
-                            : item.last_message_body ||
-                              item.other_university ||
-                              'Start a conversation'}
+                            : item.last_message_type ===
+                                'gif'
+                              ? 'GIF'
+                              : item.last_message_body ||
+                                item.other_university ||
+                                'Start a conversation'}
                         </small>
 
                       </div>
@@ -9780,7 +13684,10 @@ function PostOffice({
                 ? '100%'
                 : 'auto',
             padding: 0,
-            overflow: 'hidden',
+            overflow:
+              compact
+                ? 'visible'
+                : 'hidden',
             display: 'flex',
             flexDirection:
               'column'
@@ -9814,7 +13721,9 @@ function PostOffice({
               <div
                 style={{
                   padding:
-                    '16px 18px',
+                    compact
+                      ? '9px 10px'
+                      : '16px 18px',
                   borderBottom:
                     '1px solid rgba(0,0,0,0.08)',
                   display:
@@ -9870,21 +13779,240 @@ function PostOffice({
 
                 </div>
 
-                <button
-                  type="button"
-                  className="btn subtle"
-                  onClick={
-                    deleteConversationForMe
-                  }
+                <div
                   style={{
                     marginLeft: 'auto',
-                    padding: '7px 9px'
+                    position: 'relative'
                   }}
-                  title="Delete this chat from your inbox"
                 >
-                  <Trash2 size={14} />
-                  Delete
-                </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() =>
+                      setConversationMenuOpen(
+                        current => !current
+                      )
+                    }
+                    title="Conversation options"
+                    aria-label="Conversation options"
+                    style={{
+                      fontSize: 22,
+                      lineHeight: 1
+                    }}
+                  >
+                    ⋯
+                  </button>
+
+                  {conversationMenuOpen && (
+                    <div
+                      className="card"
+                      style={{
+                        position: 'absolute',
+                        right:
+                          compact
+                            ? -2
+                            : 0,
+                        top: 'calc(100% + 6px)',
+                        width:
+                          compact
+                            ? 238
+                            : 230,
+                        padding:
+                          compact
+                            ? 5
+                            : 7,
+                        zIndex: 12000,
+                        boxShadow:
+                          '0 18px 48px rgba(15,23,42,.18)',
+                        maxHeight:
+                          compact
+                            ? 'min(430px, calc(100vh - 110px))'
+                            : 'calc(100vh - 120px)',
+                        overflowY: 'auto',
+                        overflowX: 'hidden'
+                      }}
+                    >
+                      {[
+                        [
+                          selectedConversation.starred
+                            ? '☆'
+                            : '★',
+                          selectedConversation.starred
+                            ? 'Unstar'
+                            : 'Star',
+                          toggleConversationStar
+                        ],
+                        [
+                          '◌',
+                          'Mark as unread',
+                          markConversationUnread
+                        ],
+                        [
+                          selectedConversation.muted
+                            ? '🔔'
+                            : '🔕',
+                          selectedConversation.muted
+                            ? 'Unmute'
+                            : 'Mute',
+                          toggleConversationMute
+                        ]
+                      ].map(
+                        ([
+                          icon,
+                          label,
+                          handler
+                        ]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={handler}
+                            style={{
+                              width: '100%',
+                              border: 0,
+                              background:
+                                'transparent',
+                              display: 'flex',
+                              alignItems:
+                                'center',
+                              gap: 10,
+                              padding:
+                                '9px 10px',
+                              borderRadius: 8,
+                              cursor:
+                                'pointer',
+                              textAlign:
+                                'left'
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 20,
+                                textAlign:
+                                  'center'
+                              }}
+                            >
+                              {icon}
+                            </span>
+                            {label}
+                          </button>
+                        )
+                      )}
+
+                      <div
+                        style={{
+                          height: 1,
+                          background:
+                            'rgba(15,23,42,.08)',
+                          margin: '5px 0'
+                        }}
+                      />
+
+                      <div
+                        className="muted"
+                        style={{
+                          padding:
+                            '5px 10px 3px',
+                          fontSize: 11,
+                          fontWeight: 800
+                        }}
+                      >
+                        LABEL
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 5,
+                          padding: '4px 8px 7px'
+                        }}
+                      >
+                        {[
+                          'Study',
+                          'Course',
+                          'Career',
+                          'Personal'
+                        ].map(label => {
+                          const active =
+                            (selectedConversation.labels || [])
+                              .includes(label);
+
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              className={
+                                active
+                                  ? 'btn primary'
+                                  : 'btn subtle'
+                              }
+                              onClick={() =>
+                                toggleConversationLabel(
+                                  label
+                                )
+                              }
+                              style={{
+                                padding:
+                                  '5px 7px',
+                                fontSize: 11
+                              }}
+                              title={
+                                active
+                                  ? `Remove ${label} label`
+                                  : `Add ${label} label`
+                              }
+                            >
+                              {active
+                                ? `✓ ${label}`
+                                : label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={
+                          reportConversation
+                        }
+                        style={{
+                          width: '100%',
+                          border: 0,
+                          background:
+                            'transparent',
+                          padding:
+                            '9px 10px',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                      >
+                        ⚑ Report conversation
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={
+                          deleteConversationForMe
+                        }
+                        style={{
+                          width: '100%',
+                          border: 0,
+                          background:
+                            'transparent',
+                          color: '#b42318',
+                          padding:
+                            '9px 10px',
+                          borderRadius: 8,
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                      >
+                        🗑 Delete conversation
+                      </button>
+                    </div>
+                  )}
+                </div>
 
               </div>
 
@@ -9894,9 +14022,15 @@ function PostOffice({
               <div
                 style={{
                   flex: 1,
+                  minHeight: 0,
                   overflowY:
                     'auto',
-                  padding: 18,
+                  overflowX:
+                    'hidden',
+                  padding:
+                    compact
+                      ? 10
+                      : 18,
                   background:
                     'rgba(0,0,0,0.015)'
                 }}
@@ -9938,18 +14072,26 @@ function PostOffice({
                                 ? 'flex-end'
                                 : 'flex-start',
                             marginBottom:
-                              10
+                              compact
+                                ? 6
+                                : 10
                           }}
                         >
 
                           <div
                             style={{
                               maxWidth:
-                                'min(78%, 650px)',
+                                compact
+                                  ? '86%'
+                                  : 'min(78%, 650px)',
                               padding:
-                                '10px 12px',
+                                compact
+                                  ? '8px 10px'
+                                  : '10px 12px',
                               borderRadius:
-                                14,
+                                compact
+                                  ? 11
+                                  : 14,
                               background:
                                 mine
                                   ? 'rgba(37,99,235,0.12)'
@@ -10027,6 +14169,74 @@ function PostOffice({
                                   ?.file_name ||
                                   'Attachment'}
                               </button>
+
+                            ) : message.message_type ===
+                              'gif' &&
+                              message.metadata?.url ? (
+
+                              <div>
+                                <img
+                                  src={
+                                    message.metadata.url
+                                  }
+                                  alt="GIF"
+                                  loading="lazy"
+                                  referrerPolicy="no-referrer"
+                                  style={{
+                                    display: 'block',
+                                    maxWidth: 280,
+                                    maxHeight: 280,
+                                    borderRadius: 12,
+                                    objectFit: 'cover'
+                                  }}
+                                />
+                              </div>
+
+                            ) : message.message_type ===
+                              'post' ? (
+
+                              <div
+                                style={{
+                                  border:
+                                    '1px solid rgba(79,70,229,.18)',
+                                  background:
+                                    'linear-gradient(180deg,rgba(99,102,241,.07),rgba(255,255,255,.9))',
+                                  borderRadius: 12,
+                                  padding: 11,
+                                  minWidth: 220
+                                }}
+                              >
+                                <small
+                                  style={{
+                                    fontWeight: 800,
+                                    color: '#5b50e6'
+                                  }}
+                                >
+                                  ↗ ONSTOOD post
+                                </small>
+
+                                <div
+                                  style={{
+                                    marginTop: 5,
+                                    whiteSpace:
+                                      'pre-wrap',
+                                    overflowWrap:
+                                      'anywhere'
+                                  }}
+                                >
+                                  {message.body}
+                                </div>
+
+                                <small
+                                  className="muted"
+                                  style={{
+                                    display: 'block',
+                                    marginTop: 7
+                                  }}
+                                >
+                                  Shared inside ONSTOOD
+                                </small>
+                              </div>
 
                             ) : (
 
@@ -10231,20 +14441,72 @@ function PostOffice({
                   sendMessage
                 }
                 style={{
-                  padding: 14,
+                  padding:
+                    compact
+                      ? 6
+                      : 14,
                   borderTop:
                     '1px solid rgba(0,0,0,0.08)',
                   display:
-                    'flex',
-                  gap: 10,
+                    'grid',
+                  gridTemplateColumns:
+                    compact
+                      ? '28px 28px 28px 32px minmax(0,1fr) 32px'
+                      : 'auto auto auto auto minmax(0,1fr) auto',
+                  gap:
+                    compact
+                      ? 4
+                      : 10,
                   alignItems:
-                    'center'
+                    'center',
+                  flex: '0 0 auto',
+                  minWidth: 0,
+                  overflow: 'visible'
                 }}
               >
 
                 <label
                   className="icon-btn"
-                  title="Attach file"
+                  title="Photo or video"
+                  style={{
+                    cursor:
+                      uploading ||
+                      !isOtherOnline
+                        ? 'default'
+                        : 'pointer',
+                    flexShrink: 0
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      fontSize:
+                        compact
+                          ? 14
+                          : 17
+                    }}
+                  >
+                    🖼️
+                  </span>
+
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    hidden
+                    disabled={
+                      uploading ||
+                      !isOtherOnline
+                    }
+                    onChange={
+                      uploadAttachment
+                    }
+                  />
+                </label>
+
+
+                <label
+                  className="icon-btn"
+                  title="Attach document"
                   style={{
                     cursor:
                       uploading ||
@@ -10272,6 +14534,172 @@ function PostOffice({
                   />
 
                 </label>
+
+
+                <div
+                  style={{
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Emoji"
+                    disabled={!isOtherOnline}
+                    onClick={() => {
+                      setEmojiOpen(
+                        current => !current
+                      );
+                      setGifOpen(false);
+                    }}
+                    style={{
+                      fontSize:
+                        compact
+                          ? 15
+                          : 18
+                    }}
+                  >
+                    🙂
+                  </button>
+
+                  {emojiOpen && (
+                    <div
+                      className="card"
+                      style={{
+                        position: 'absolute',
+                        bottom:
+                          'calc(100% + 8px)',
+                        left: 0,
+                        zIndex: 12020,
+                        width: compact ? 196 : 210,
+                        padding: compact ? 5 : 8,
+                        display: 'grid',
+                        gridTemplateColumns:
+                          'repeat(6,1fr)',
+                        gap: 4,
+                        boxShadow:
+                          '0 14px 36px rgba(15,23,42,.18)'
+                      }}
+                    >
+                      {[
+                        '😀','😂','😍','🥳',
+                        '😎','🤔','😊','🙏',
+                        '👍','👏','🔥','❤️',
+                        '📚','🎓','💡','✅',
+                        '😅','😭','😮','😉',
+                        '🤝','💪','✨','🚀'
+                      ].map(emoji => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() =>
+                            addEmoji(emoji)
+                          }
+                          style={{
+                            border: 0,
+                            background:
+                              'transparent',
+                            fontSize: compact ? 18 : 20,
+                            cursor:
+                              'pointer',
+                            padding: compact ? 2 : 4,
+                            borderRadius: 7
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+
+                <div
+                  style={{
+                    position: 'relative',
+                    flexShrink: 0
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Send GIF"
+                    disabled={!isOtherOnline}
+                    onClick={() => {
+                      setGifOpen(
+                        current => !current
+                      );
+                      setEmojiOpen(false);
+                    }}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 900
+                    }}
+                  >
+                    GIF
+                  </button>
+
+                  {gifOpen && (
+                    <div
+                      className="card"
+                      style={{
+                        position: 'absolute',
+                        bottom:
+                          'calc(100% + 8px)',
+                        left: 0,
+                        zIndex: 12020,
+                        width: compact ? 250 : 300,
+                        padding: compact ? 7 : 10,
+                        boxShadow:
+                          '0 14px 36px rgba(15,23,42,.18)'
+                      }}
+                    >
+                      <small
+                        className="muted"
+                        style={{
+                          display: 'block',
+                          marginBottom: 6
+                        }}
+                      >
+                        Paste an HTTPS GIF link
+                      </small>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6
+                        }}
+                      >
+                        <input
+                          value={gifUrl}
+                          onChange={event =>
+                            setGifUrl(
+                              event.target.value
+                            )
+                          }
+                          placeholder="https://…gif"
+                          style={{
+                            flex: 1,
+                            margin: 0
+                          }}
+                        />
+
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={
+                            !gifUrl.trim() ||
+                            sending
+                          }
+                          onClick={sendGif}
+                        >
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
 
                 <input
@@ -10302,7 +14730,17 @@ function PostOffice({
                     )
                   }
                   style={{
-                    flex: 1
+                    width: '100%',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                    boxSizing: 'border-box',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    margin: 0,
+                    height:
+                      compact
+                        ? 36
+                        : undefined
                   }}
                 />
 
@@ -10318,7 +14756,6 @@ function PostOffice({
                   }
                 >
                   <Send size={16} />
-                  Send
                 </button>
 
               </form>
@@ -10330,6 +14767,171 @@ function PostOffice({
         </div>
 
       </div>
+
+      {reportOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() =>
+            setReportOpen(false)
+          }
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 30050,
+            background:
+              'rgba(15,23,42,.42)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 16
+          }}
+        >
+          <div
+            className="card"
+            onClick={event =>
+              event.stopPropagation()
+            }
+            style={{
+              width:
+                'min(390px,92vw)',
+              padding: 16
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent:
+                  'space-between',
+                gap: 10
+              }}
+            >
+              <div>
+                <b>
+                  Report conversation
+                </b>
+                <div
+                  className="muted"
+                  style={{
+                    fontSize: 12,
+                    marginTop: 2
+                  }}
+                >
+                  Send this conversation to ONSTOOD moderation.
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() =>
+                  setReportOpen(false)
+                }
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <label
+              style={{
+                display: 'block',
+                marginTop: 14
+              }}
+            >
+              Reason
+
+              <select
+                value={
+                  reportCategory
+                }
+                onChange={event =>
+                  setReportCategory(
+                    event.target.value
+                  )
+                }
+                style={{
+                  width: '100%',
+                  marginTop: 6
+                }}
+              >
+                <option value="harassment">
+                  Harassment
+                </option>
+                <option value="spam">
+                  Spam
+                </option>
+                <option value="hate">
+                  Hate or abusive content
+                </option>
+                <option value="scam">
+                  Scam or fraud
+                </option>
+                <option value="other">
+                  Other
+                </option>
+              </select>
+            </label>
+
+            <label
+              style={{
+                display: 'block',
+                marginTop: 12
+              }}
+            >
+              Details (optional)
+
+              <textarea
+                value={
+                  reportDetails
+                }
+                onChange={event =>
+                  setReportDetails(
+                    event.target.value
+                  )
+                }
+                placeholder="Tell us briefly what happened…"
+                maxLength={1000}
+                style={{
+                  width: '100%',
+                  minHeight: 90,
+                  marginTop: 6
+                }}
+              />
+            </label>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent:
+                  'flex-end',
+                gap: 8,
+                marginTop: 12
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() =>
+                  setReportOpen(false)
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                onClick={
+                  submitConversationReport
+                }
+              >
+                Send report
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {deleteChoiceMessage && (
 
@@ -16937,7 +21539,7 @@ function SocialLayerPanel({ profile, viewingProfile, followingIds = [], onFollow
   }
 
   return <div className="card" style={{marginTop:16}}>
-    <div className="card-head"><div><h3>Photos & social</h3><small className="muted">Albums, follow and profile timeline controls.</small></div><Users size={18}/></div>
+    <div className="card-head"><div><h3>Photos & social</h3><small className="muted">Posts, follow and Onstream controls.</small></div><Users size={18}/></div>
     {!own && <div className="row" style={{marginBottom:14}}>
       <button className={following ? 'btn subtle' : 'btn primary'} onClick={() => following ? onUnfollow?.(target.id) : onFollow?.(target.id)}>
         {following ? 'Following' : 'Follow'}
@@ -16974,7 +21576,10 @@ function SocialLayerPanel({ profile, viewingProfile, followingIds = [], onFollow
 }
 
 function AI({
-  profile
+  profile,
+  externalAsk = null,
+  onExternalAskConsumed = null,
+  onUsageChanged = null
 }) {
   const [plan, setPlan] = useState({ plan_code: 'free', standard_limit: 5, advanced_limit: 0, monthly_price_eur: 0 });
   const [aiInsights, setAiInsights] = useState([]);
@@ -17023,6 +21628,10 @@ function AI({
 
   const inputRef = useRef(null);
   const chatEndRef = useRef(null);
+  const lastExternalAskRef = useRef(null);
+
+  const [planLoaded, setPlanLoaded] =
+    useState(false);
 
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -17033,6 +21642,7 @@ function AI({
   const [historySearch, setHistorySearch] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(null);
 
   const standardLeft = Math.max(0, Number(plan.standard_limit || 0) - Number(usage.standard_count || 0));
   const advancedLeft = Math.max(0, Number(plan.advanced_limit || 0) - Number(usage.advanced_count || 0));
@@ -17062,6 +21672,10 @@ function AI({
       const row = Array.isArray(data) ? data[0] : data;
       setUsage({ standard_count: Number(row?.standard_used || 0), advanced_count: Number(row?.advanced_used || 0) });
       setPlan({ plan_code: row?.plan_code || 'free', standard_limit: Number(row?.standard_limit ?? 5), advanced_limit: Number(row?.advanced_limit ?? 0), monthly_price_eur: Number(row?.monthly_price_eur ?? 0) });
+      setPlanLoaded(true);
+      onUsageChanged?.();
+    } else {
+      setPlanLoaded(true);
     }
   }
 
@@ -17103,9 +21717,9 @@ function AI({
     ]);
 
     const items = [];
-    (eventsResult.data || []).forEach(item => items.push({ kind: 'Upcoming', title: item.title, meta: item.location || new Date(item.starts_at).toLocaleString() }));
-    (docsResult.data || []).forEach(item => items.push({ kind: 'Document', title: item.file_name, meta: 'Available in ONSTOOD' }));
-    (postsResult.data || []).filter(item => item.body?.trim()).forEach(item => items.push({ kind: 'From your network', title: item.body.trim().slice(0, 90), meta: 'Shared on ONSTOOD' }));
+    (eventsResult.data || []).forEach(item => items.push({ id: item.id, sourceType: 'calendar_event', kind: 'Upcoming', title: item.title, context: [item.title, item.location].filter(Boolean).join(' — '), meta: item.location || new Date(item.starts_at).toLocaleString() }));
+    (docsResult.data || []).forEach(item => items.push({ id: item.id, sourceType: 'document', kind: 'Document', title: item.file_name, context: item.file_name, meta: 'Available in ONSTOOD' }));
+    (postsResult.data || []).filter(item => item.body?.trim()).forEach(item => items.push({ id: item.id, sourceType: 'post', kind: 'From your network', title: item.body.trim().slice(0, 90), context: item.body.trim(), meta: 'Shared on ONSTOOD' }));
     setSuggestions(items.slice(0, 12));
   }
 
@@ -17147,9 +21761,9 @@ function AI({
     try { await supabase.rpc('refund_ai_question', { p_mode: questionMode }); } catch {}
   }
 
-  async function send(event, forcedMode = 'standard') {
+  async function send(event, forcedMode = 'standard', forcedQuestion = null) {
     event?.preventDefault?.();
-    const question = text.trim();
+    const question = String(forcedQuestion ?? text).trim();
     if (!question || busy) return;
     const questionMode = forcedMode === 'advanced' ? 'advanced' : 'standard';
 
@@ -17178,6 +21792,7 @@ function AI({
 
       setUsage({ standard_count: Number(quota.standard_used || 0), advanced_count: Number(quota.advanced_used || 0) });
       setPlan(current => ({ ...current, plan_code: quota.plan_code || current.plan_code, standard_limit: Number(quota.standard_limit ?? current.standard_limit), advanced_limit: Number(quota.advanced_limit ?? current.advanced_limit) }));
+      onUsageChanged?.();
 
       const userMessage = { conversation_id: activeId, user_id: profile.id, role: 'user', mode: questionMode, content: question };
       const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,created_at').single();
@@ -17205,6 +21820,98 @@ function AI({
       scrollChat();
     }
   }
+
+  useEffect(() => {
+    if (
+      !externalAsk?.id ||
+      !planLoaded ||
+      busy ||
+      lastExternalAskRef.current ===
+        externalAsk.id
+    ) {
+      return;
+    }
+
+    lastExternalAskRef.current =
+      externalAsk.id;
+
+    const selectedText =
+      String(
+        externalAsk.text || ''
+      ).trim();
+
+    if (!selectedText) {
+      onExternalAskConsumed?.();
+      return;
+    }
+
+    const question =
+      `${selectedText}\n\nHelp me understand this selected text clearly.`;
+
+    setText(question);
+
+    send(
+      null,
+      externalAsk.mode ===
+        'advanced'
+        ? 'advanced'
+        : 'standard',
+      question
+    );
+
+    onExternalAskConsumed?.();
+
+  }, [
+    externalAsk?.id,
+    planLoaded,
+    busy
+  ]);
+
+
+  function buildSuggestionQuestion(item) {
+    if (!item) return '';
+    const source = String(item.context || item.title || '').trim();
+    if (!source) return '';
+    return `Explain this ONSTOOD material and help me understand it:\n\n${source}`;
+  }
+
+  function chooseSuggestion(item) {
+    setSelectedSuggestion(item);
+  }
+
+  function askSelectedSuggestion(
+    event,
+    mode = 'standard'
+  ) {
+    event?.preventDefault?.();
+
+    if (!selectedSuggestion || busy) {
+      return;
+    }
+
+    const question =
+      buildSuggestionQuestion(
+        selectedSuggestion
+      );
+
+    if (!question) {
+      return;
+    }
+
+    setText(question);
+
+    send(
+      event,
+      mode === 'advanced'
+        ? 'advanced'
+        : 'standard',
+      question
+    );
+
+    setSelectedSuggestion(null);
+  }
+
+
 
   const filteredHistory = conversations.filter(item => (item.title || '').toLowerCase().includes(historySearch.toLowerCase()));
   const activeSuggestion = suggestions.length ? suggestions[suggestionIndex % suggestions.length] : null;
@@ -17318,20 +22025,175 @@ function AI({
           box-shadow:inset 0 0 18px rgba(96,165,250,.08),0 0 14px rgba(99,102,241,.12);
         }
         @media(max-width:850px){.onstood-advanced-chip{width:154px;min-width:154px}.onstood-chip-title{font-size:9.5px;letter-spacing:.55px}.onstood-chip-label{gap:5px}.onstood-chip-count{padding:3px 5px}}
-      `}</style>
+
+        .onstood-ai-selection-toolbar{
+          position:fixed;z-index:60000;display:flex;align-items:center;gap:6px;
+          padding:6px;border-radius:14px;border:1px solid rgba(99,102,241,.20);
+          background:rgba(255,255,255,.97);backdrop-filter:blur(14px);
+          box-shadow:0 14px 38px rgba(15,23,42,.20);
+        }
+        .onstood-ai-selection-copy{
+          width:34px;height:34px;border-radius:10px;border:1px solid rgba(148,163,184,.25);
+          background:#fff;cursor:pointer;display:grid;place-items:center;color:#475569;
+        }
+        .onstood-ai-selection-chip{
+          min-height:34px;padding:0 10px;border-radius:10px;position:relative;overflow:hidden;
+          border:1px solid rgba(99,102,241,.30);cursor:pointer;isolation:isolate;
+          display:inline-flex;align-items:center;gap:7px;font-size:10px;font-weight:850;letter-spacing:.45px;
+          white-space:nowrap;
+        }
+        .onstood-ai-selection-chip.standard{
+          color:#eef2ff;background:linear-gradient(145deg,rgba(31,41,74,.98),rgba(67,56,202,.93));
+          box-shadow:inset 0 0 14px rgba(96,165,250,.07),0 0 13px rgba(99,102,241,.18);
+        }
+        .onstood-ai-selection-chip.advanced{
+          color:#fff;background:radial-gradient(circle at 80% 50%,rgba(96,165,250,.22),transparent 28%),linear-gradient(135deg,#071126,#1d2853);
+          box-shadow:inset 0 0 18px rgba(96,165,250,.08),0 0 17px rgba(99,102,241,.22);
+        }
+        .onstood-ai-selection-chip:disabled{opacity:.38;cursor:default;box-shadow:none}
+        .onstood-ai-selection-chip:not(:disabled):hover{transform:translateY(-1px);box-shadow:inset 0 0 20px rgba(96,165,250,.12),0 0 22px rgba(99,102,241,.28)}
+        .onstood-ai-selection-led{
+          width:8px;height:8px;border-radius:50%;background:#93c5fd;
+          box-shadow:0 0 5px #60a5fa,0 0 11px rgba(99,102,241,.95);
+          animation:onstoodSelectionLed 1.7s ease-in-out infinite;position:relative;z-index:2;
+        }
+        .onstood-ai-selection-chip:disabled .onstood-ai-selection-led{background:#64748b;box-shadow:none;animation:none}
+        .onstood-ai-selection-flow{
+          position:absolute;left:-18px;bottom:5px;width:18px;height:1px;border-radius:99px;
+          background:#bfdbfe;box-shadow:0 0 6px #60a5fa;opacity:0;
+          animation:onstoodSelectionFlow 2.2s linear infinite;z-index:1;
+        }
+        .onstood-ai-selection-chip.advanced .onstood-ai-selection-flow{animation-duration:1.55s}
+        .onstood-ai-selection-chip:disabled .onstood-ai-selection-flow{display:none}
+        @keyframes onstoodSelectionLed{0%,100%{opacity:.52}50%{opacity:1}}
+        @keyframes onstoodSelectionFlow{0%{transform:translateX(0);opacity:0}18%{opacity:.9}78%{opacity:.9}100%{transform:translateX(150px);opacity:0}}
+        @media(max-width:720px){
+          .onstood-ai-selection-toolbar{max-width:calc(100vw - 16px);gap:4px;padding:5px}
+          .onstood-ai-selection-chip{padding:0 7px;font-size:9px;letter-spacing:.2px}
+          .onstood-ai-selection-copy{width:30px;height:30px}
+        }
+      
+      .onstood-mini-chat-shell {
+        min-width: 0 !important;
+        overflow: hidden !important;
+      }
+      .onstood-mini-chat-shell .card { border-radius: 10px !important; }
+      .onstood-mini-chat-shell button,
+      .onstood-mini-chat-shell input,
+      .onstood-mini-chat-shell textarea { font-size: 12.5px !important; }
+      .onstood-mini-chat-shell input,
+      .onstood-mini-chat-shell textarea {
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      .onstood-mini-chat-shell .btn {
+        min-height: 31px !important;
+        padding: 5px 8px !important;
+        gap: 5px !important;
+      }
+      .onstood-mini-chat-shell .icon-btn {
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+        padding: 4px !important;
+      }
+      .onstood-mini-chat-shell small { font-size: 10px !important; }
+      .onstood-mini-chat-shell img { max-width: 100% !important; }
+`}</style>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeSuggestion ? (
-              <div key={`${activeSuggestion.kind}-${suggestionIndex}`} style={{ display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease' }}>
+              <button type="button" onClick={() => chooseSuggestion(activeSuggestion)} key={`${activeSuggestion.kind}-${activeSuggestion.id || suggestionIndex}`} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease', cursor: 'pointer', textAlign: 'left' }} title="Open this material with ONSTOOD AI">
                 <span style={{ padding: '5px 9px', borderRadius: 999, background: 'rgba(99,102,241,.09)', fontSize: 11, fontWeight: 800 }}>{activeSuggestion.kind}</span>
                 <div style={{ minWidth: 0 }}><b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSuggestion.title}</b><small className="muted">{activeSuggestion.meta}</small></div>
-              </div>
+              </button>
             ) : <small className="muted">Suggestions will appear here from ONSTOOD content available to you.</small>}
           </div>
           {suggestions.length > 1 && <small className="muted">{suggestionIndex + 1}/{suggestions.length}</small>}
         </div>
+
+        {selectedSuggestion && (
+          <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(99,102,241,.035)' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <small className="muted" style={{ display: 'block', fontWeight: 800 }}>SELECTED ONSTOOD MATERIAL</small>
+              <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedSuggestion.title}</b>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                flexWrap: 'wrap',
+                justifyContent: 'flex-end'
+              }}
+            >
+              <button
+                type="button"
+                className="onstood-global-selection-chip standard"
+                disabled={
+                  busy ||
+                  standardLeft <= 0
+                }
+                onClick={event =>
+                  askSelectedSuggestion(
+                    event,
+                    'standard'
+                  )
+                }
+                title="Ask ONSTOOD AI about this material"
+              >
+                <span className="onstood-global-selection-flow" />
+                <span className="onstood-global-selection-led" />
+                <span className="onstood-global-selection-label">
+                  ASK ONSTOOD AI
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="onstood-global-selection-chip advanced"
+                disabled={
+                  busy ||
+                  !isPro ||
+                  advancedLeft <= 0
+                }
+                onClick={event =>
+                  askSelectedSuggestion(
+                    event,
+                    'advanced'
+                  )
+                }
+                title={
+                  isPro
+                    ? 'Ask Advanced ONSTOOD AI about this material'
+                    : 'Advanced AI requires ONSTOOD PRO'
+                }
+              >
+                <span className="onstood-global-selection-flow" />
+                <span className="onstood-global-selection-led" />
+                <span className="onstood-global-selection-label">
+                  ASK ADVANCED ONSTOOD AI
+                </span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() =>
+                setSelectedSuggestion(
+                  null
+                )
+              }
+              title="Close"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         <div style={{ display: 'flex', minHeight: 610 }}>
           <aside style={{ width: 250, borderRight: '1px solid rgba(0,0,0,.08)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -17349,7 +22211,9 @@ function AI({
           </aside>
 
           <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <div style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}>
+            <div
+              style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
+            >
               {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
               {messages.map(message => (
                 <div key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
@@ -17408,6 +22272,7 @@ function AI({
           </section>
         </div>
       </div>
+
     </Page>
   );
 }
@@ -17417,155 +22282,175 @@ function AI({
    ========================================================= */
 
 
-function MyProfile({ profile, notify, onEditProfile }) {
-  const [albums,setAlbums]=useState([]);
-  const [photosByAlbum,setPhotosByAlbum]=useState({});
-  const [followers,setFollowers]=useState(0);
-  const [following,setFollowing]=useState(0);
-  const [connections,setConnections]=useState(0);
-  const [albumTitle,setAlbumTitle]=useState('');
-  const [albumVisibility,setAlbumVisibility]=useState('');
-  const [albumFiles,setAlbumFiles]=useState([]);
-  const [uploading,setUploading]=useState(false);
-  const [largePhoto,setLargePhoto]=useState(null);
+function MyProfile({
+  profile,
+  notify,
+  onEditProfile
+}) {
+  const [followers, setFollowers] =
+    useState(0);
+  const [following, setFollowing] =
+    useState(0);
+  const [connections, setConnections] =
+    useState(0);
 
-  async function signedPhoto(photo){
-    const {data}=await supabase.storage.from('profile-photos').createSignedUrl(photo.storage_path,3600);
-    return {...photo,signed_url:data?.signedUrl||null};
-  }
+  useEffect(() => {
+    let active = true;
 
-  async function loadSocial(){
-    if(!profile?.id) return;
-    const [a,p,fr,fg,cn]=await Promise.all([
-      supabase.from('photo_albums').select('*').eq('owner_id',profile.id).order('created_at',{ascending:false}),
-      supabase.from('photos').select('*').eq('owner_id',profile.id).order('created_at',{ascending:false}),
-      supabase.from('follows').select('*',{count:'exact',head:true}).eq('following_id',profile.id),
-      supabase.from('follows').select('*',{count:'exact',head:true}).eq('follower_id',profile.id),
-      supabase.from('friend_requests').select('*',{count:'exact',head:true}).eq('status','accepted').or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
-    ]);
-    setAlbums(a.data||[]); setFollowers(fr.count||0); setFollowing(fg.count||0); setConnections(cn.count||0);
-    const signed=await Promise.all((p.data||[]).map(signedPhoto));
-    const grouped={};
-    signed.forEach(photo=>{(grouped[photo.album_id] ||= []).push(photo)});
-    setPhotosByAlbum(grouped);
-  }
-  useEffect(()=>{loadSocial()},[profile?.id]);
+    async function loadCounts() {
+      if (!profile?.id) return;
 
-  async function uploadPhotosToAlbum(album, files){
-    const list=Array.from(files||[]);
-    if(!list.length) return;
-    setUploading(true);
-    try{
-      for(const file of list){
-        if(!file.type?.startsWith('image/')) continue;
-        const ext=(file.name.split('.').pop()||'jpg').toLowerCase();
-        const safeExt=['jpg','jpeg','png','webp','gif'].includes(ext)?ext:'jpg';
-        const path=`${profile.id}/${album.id}/${crypto.randomUUID()}.${safeExt}`;
-        const {error:upErr}=await supabase.storage.from('profile-photos').upload(path,file,{contentType:file.type,upsert:false});
-        if(upErr) throw upErr;
-        const {error:dbErr}=await supabase.from('photos').insert({
-          album_id:album.id, owner_id:profile.id, storage_path:path, visibility:album.visibility
-        });
-        if(dbErr){ await supabase.storage.from('profile-photos').remove([path]); throw dbErr; }
-      }
-      notify(list.length===1?'Photo uploaded.':`${list.length} photos uploaded.`);
-      await loadSocial();
-    }catch(error){notify(error.message||'Photo upload failed.')}finally{setUploading(false)}
-  }
+      const [
+        followersResult,
+        followingResult,
+        connectionsResult
+      ] = await Promise.all([
+        supabase
+          .from('follows')
+          .select('*', {
+            count: 'exact',
+            head: true
+          })
+          .eq(
+            'following_id',
+            profile.id
+          ),
 
-  async function createAlbum(){
-    if(!albumTitle.trim()||!albumVisibility) return;
-    setUploading(true);
-    const {data,error}=await supabase.from('photo_albums').insert({
-      owner_id:profile.id,title:albumTitle.trim(),visibility:albumVisibility
-    }).select().single();
-    if(error){setUploading(false);notify(error.message);return}
-    if(albumFiles.length) await uploadPhotosToAlbum(data,albumFiles);
-    setAlbumTitle('');setAlbumVisibility('');setAlbumFiles([]);setUploading(false);await loadSocial();notify(`Album “${data.title}” created.`);
-  }
+        supabase
+          .from('follows')
+          .select('*', {
+            count: 'exact',
+            head: true
+          })
+          .eq(
+            'follower_id',
+            profile.id
+          ),
 
-  async function deleteAlbum(album){
-    const paths=(photosByAlbum[album.id]||[]).map(p=>p.storage_path).filter(Boolean);
-    if(paths.length) await supabase.storage.from('profile-photos').remove(paths);
-    const {error}=await supabase.from('photo_albums').delete().eq('id',album.id).eq('owner_id',profile.id);
-    if(error){notify(error.message);return} loadSocial();
-  }
+        supabase
+          .from('friend_requests')
+          .select('*', {
+            count: 'exact',
+            head: true
+          })
+          .eq('status', 'accepted')
+          .or(
+            `sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`
+          )
+      ]);
 
-  async function deletePhoto(photo){
-    await supabase.storage.from('profile-photos').remove([photo.storage_path]);
-    const {error}=await supabase.from('photos').delete().eq('id',photo.id).eq('owner_id',profile.id);
-    if(error){notify(error.message);return} loadSocial();
-  }
+      if (!active) return;
 
-  async function changeAlbumPrivacy(id,visibility){
-    const {error}=await supabase.from('photo_albums').update({visibility,updated_at:new Date().toISOString()}).eq('id',id).eq('owner_id',profile.id);
-    if(error){notify(error.message);return}
-    await supabase.from('photos').update({visibility}).eq('album_id',id).eq('owner_id',profile.id);
-    loadSocial();
-  }
+      setFollowers(
+        followersResult.count || 0
+      );
+      setFollowing(
+        followingResult.count || 0
+      );
+      setConnections(
+        connectionsResult.count || 0
+      );
+    }
 
-  return <Page eyebrow="PROFILE" title={`${profile.name||''} ${profile.surname||''}`}>
-    <div className="card">
-      <div style={{display:'flex',gap:18,alignItems:'center',flexWrap:'wrap'}}>
-        <Avatar profile={profile}/>
-        <div style={{flex:1,minWidth:220}}>
-          <h2 style={{margin:'0 0 4px'}}>{profile.name} {profile.surname}</h2>
-          <div className="muted">{profile.university||'ONSTOOD member'}{profile.degree?` · ${profile.degree}`:''}</div>
-          <div className="row" style={{gap:18,marginTop:12,flexWrap:'wrap'}}>
-            <b>{connections} <span className="muted">Connections</span></b>
-            <b>{followers} <span className="muted">Followers</span></b>
-            <b>{following} <span className="muted">Following</span></b>
+    loadCounts();
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.id]);
+
+  return (
+    <Page
+      eyebrow="PROFILE"
+      title={`${profile.name || ''} ${profile.surname || ''}`}
+    >
+      <div className="card">
+        <div
+          style={{
+            display: 'flex',
+            gap: 18,
+            alignItems: 'center',
+            flexWrap: 'wrap'
+          }}
+        >
+          <Avatar
+            profile={profile}
+            size="xl"
+          />
+
+          <div
+            style={{
+              flex: 1,
+              minWidth: 220
+            }}
+          >
+            <h2
+              style={{
+                margin: '0 0 4px'
+              }}
+            >
+              {profile.name}{' '}
+              {profile.surname}
+            </h2>
+
+            <div className="muted">
+              {profile.university ||
+                'ONSTOOD member'}
+              {profile.degree
+                ? ` · ${profile.degree}`
+                : ''}
+            </div>
+
+            <div
+              className="row"
+              style={{
+                gap: 18,
+                marginTop: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <b>
+                {connections}{' '}
+                <span className="muted">
+                  Connections
+                </span>
+              </b>
+
+              <b>
+                {followers}{' '}
+                <span className="muted">
+                  Followers
+                </span>
+              </b>
+
+              <b>
+                {following}{' '}
+                <span className="muted">
+                  Following
+                </span>
+              </b>
+            </div>
           </div>
+
+          <button
+            className="btn subtle"
+            onClick={onEditProfile}
+          >
+            Edit profile
+          </button>
         </div>
-        <button className="btn subtle" onClick={onEditProfile}>Edit profile</button>
       </div>
-    </div>
 
-    <div className="card" style={{marginTop:16}}>
-      <div className="card-head"><div><h3>Photos & albums</h3><small className="muted">Create an album like “Matura 2025” and upload one or many photos.</small></div><FolderOpen size={18}/></div>
-      <div style={{display:'grid',gap:9}}>
-        <input value={albumTitle} onChange={e=>setAlbumTitle(e.target.value)} placeholder="Album title · e.g. Matura 2025"/>
-        <select value={albumVisibility} onChange={e=>setAlbumVisibility(e.target.value)}>
-          <option value="">Choose privacy…</option><option value="only_me">Only me</option><option value="connections">Connections</option><option value="public">Public</option>
-        </select>
-        <label className="btn subtle" style={{width:'fit-content',cursor:'pointer'}}>
-          <Upload size={15}/> Choose photos
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={e=>setAlbumFiles(Array.from(e.target.files||[]))}/>
-        </label>
-        {albumFiles.length>0 && <small className="muted">{albumFiles.length} photo{albumFiles.length===1?'':'s'} selected.</small>}
-        <button className="btn primary" disabled={!albumTitle.trim()||!albumVisibility||uploading} onClick={createAlbum}>{uploading?'Working…':'Create album'}</button>
-      </div>
-      <small className="muted" style={{display:'block',marginTop:8}}>Privacy must be chosen before the album is created. You can change it later.</small>
-
-      <div style={{display:'grid',gap:14,marginTop:18}}>
-        {albums.length===0?<div className="empty compact">No albums yet.</div>:albums.map(a=><div className="card" key={a.id} style={{padding:14}}>
-          <div className="metric" style={{marginBottom:10}}>
-            <span><b>{a.title}</b><small className="muted" style={{display:'block'}}>{a.visibility.replaceAll('_',' ')} · {(photosByAlbum[a.id]||[]).length} photos</small></span>
-            <span className="row" style={{gap:6}}>
-              <select value={a.visibility} onChange={e=>changeAlbumPrivacy(a.id,e.target.value)}><option value="only_me">Only me</option><option value="connections">Connections</option><option value="public">Public</option></select>
-              <button className="icon-btn" title="Delete album" onClick={()=>deleteAlbum(a)}><Trash2 size={15}/></button>
-            </span>
-          </div>
-          <label className="btn subtle" style={{width:'fit-content',cursor:'pointer',marginBottom:10}}>
-            <Upload size={15}/> Add photos
-            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden onChange={e=>{uploadPhotosToAlbum(a,e.target.files);e.target.value=''}}/>
-          </label>
-          {(photosByAlbum[a.id]||[]).length>0 && <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:8}}>
-            {(photosByAlbum[a.id]||[]).map(photo=><div key={photo.id} style={{position:'relative',aspectRatio:'1/1',overflow:'hidden',borderRadius:12,background:'#eef1f7'}}>
-              {photo.signed_url && <button type="button" onClick={()=>setLargePhoto(photo)} title="Open photo" style={{border:0,padding:0,width:'100%',height:'100%',cursor:'zoom-in',background:'transparent'}}><img src={photo.signed_url} alt={a.title} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}/></button>}
-              <button className="icon-btn" title="Delete photo" onClick={()=>deletePhoto(photo)} style={{position:'absolute',right:6,top:6,background:'rgba(255,255,255,.9)',zIndex:2}}><Trash2 size={14}/></button>
-            </div>)}
-          </div>}
-        </div>)}
-      </div>
-    </div>
-    {largePhoto?.signed_url&&<div role="dialog" aria-modal="true" onClick={()=>setLargePhoto(null)} style={{position:'fixed',inset:0,zIndex:12000,background:'rgba(7,10,20,.88)',display:'flex',alignItems:'center',justifyContent:'center',padding:24,cursor:'zoom-out'}}>
-      <img src={largePhoto.signed_url} alt="Photo" onClick={e=>e.stopPropagation()} style={{maxWidth:'94vw',maxHeight:'90vh',objectFit:'contain',borderRadius:14,boxShadow:'0 25px 80px rgba(0,0,0,.45)'}}/>
-      <button className="icon-btn" onClick={()=>setLargePhoto(null)} style={{position:'fixed',right:24,top:24,background:'white'}}><X size={20}/></button>
-    </div>}
-    <ProfileTimeline viewer={profile} person={profile} connectionStatus="connected" notify={notify}/>
-  </Page>
+      <ProfileContentTabs
+        viewer={profile}
+        person={profile}
+        connectionStatus="connected"
+        notify={notify}
+      />
+    </Page>
+  );
 }
+
 
 function ProfileEditor({
   profile,
@@ -17581,6 +22466,38 @@ function ProfileEditor({
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(null);
+
+  const [socialProvider, setSocialProvider] = useState(null);
+  const [canEditSocialName, setCanEditSocialName] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadIdentityMode() {
+      const { data } = await supabase.auth.getUser();
+      if (!active) return;
+
+      const providers = (data?.user?.identities || [])
+        .map(identity => identity?.provider)
+        .filter(Boolean);
+
+      const provider =
+        providers.find(item => item === 'google' || item === 'apple') || null;
+
+      setSocialProvider(provider);
+      setCanEditSocialName(
+        Boolean(provider) &&
+        !Boolean(profile?.social_name_edit_used)
+      );
+    }
+
+    loadIdentityMode();
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.id, profile?.social_name_edit_used]);
+
 
 
   useEffect(() => {
@@ -17725,7 +22642,7 @@ function ProfileEditor({
 
 
     const filePath =
-      `${userId}/avatar.${extension}`;
+      `${userId}/${crypto.randomUUID()}.${extension}`;
 
 
     const {
@@ -17801,8 +22718,18 @@ function ProfileEditor({
 
       const payload = {
 
-        name: profile.name || '',
-        surname: profile.surname || '',
+        name:
+          canEditSocialName
+            ? (form.name || '').trim()
+            : profile.name || '',
+        surname:
+          canEditSocialName
+            ? (form.surname || '').trim()
+            : profile.surname || '',
+        social_name_edit_used:
+          canEditSocialName
+            ? true
+            : Boolean(profile.social_name_edit_used),
         university:
           isEmployer
             ? ''
@@ -17856,6 +22783,27 @@ function ProfileEditor({
 
       if (error) {
         throw error;
+      }
+
+      if (avatarFile && data.avatar_url) {
+        const {
+          error: historyError
+        } = await supabase
+          .from('profile_picture_history')
+          .insert({
+            user_id: profile.id,
+            storage_path:
+              data.avatar_url,
+            visibility:
+              avatarVisibility
+          });
+
+        if (historyError) {
+          console.error(
+            'Profile picture history error:',
+            historyError
+          );
+        }
       }
 
 
@@ -18027,14 +22975,33 @@ function ProfileEditor({
             First name
 
             <input
-              value={profile.name || ''}
-              readOnly
-              disabled
-              title="First name is fixed after account creation."
+              value={
+                canEditSocialName
+                  ? form.name || ''
+                  : profile.name || ''
+              }
+              onChange={
+                canEditSocialName
+                  ? event =>
+                      updateField(
+                        'name',
+                        event.target.value
+                      )
+                  : undefined
+              }
+              readOnly={!canEditSocialName}
+              disabled={!canEditSocialName}
+              title={
+                canEditSocialName
+                  ? 'You may correct your name once because this account was created with Google or Apple.'
+                  : 'Name is fixed after account setup.'
+              }
             />
 
             <small className="muted">
-              Fixed after account creation.
+              {canEditSocialName
+                ? `Imported from ${socialProvider === 'apple' ? 'Apple' : 'Google'} · you can correct it once.`
+                : 'Fixed after account setup.'}
             </small>
           </label>
 
@@ -18043,14 +23010,33 @@ function ProfileEditor({
             Last name
 
             <input
-              value={profile.surname || ''}
-              readOnly
-              disabled
-              title="Last name is fixed after account creation."
+              value={
+                canEditSocialName
+                  ? form.surname || ''
+                  : profile.surname || ''
+              }
+              onChange={
+                canEditSocialName
+                  ? event =>
+                      updateField(
+                        'surname',
+                        event.target.value
+                      )
+                  : undefined
+              }
+              readOnly={!canEditSocialName}
+              disabled={!canEditSocialName}
+              title={
+                canEditSocialName
+                  ? 'You may correct your surname once because this account was created with Google or Apple.'
+                  : 'Surname is fixed after account setup.'
+              }
             />
 
             <small className="muted">
-              Fixed after account creation.
+              {canEditSocialName
+                ? 'Save once to confirm your preferred name.'
+                : 'Fixed after account setup.'}
             </small>
           </label>
 
@@ -20966,6 +25952,14 @@ function SettingsPage({
         }}
       >
 
+        <section>
+          <ProfileEditor
+            profile={profile}
+            setProfile={setProfile}
+            notify={notify}
+          />
+        </section>
+
         <section className="card">
           <div className="card-head">
             <div>
@@ -22315,6 +27309,7 @@ function MiniChat({
   targetUserId,
   targetConversationId,
   onlineUserIds = [],
+  index = 0,
   onClose
 }) {
 
@@ -22325,20 +27320,68 @@ function MiniChat({
     return null;
   }
 
+  const chatWidth = 360;
+  const chatHeight = 520;
+  const chatGap = 10;
+  const onlinePanelWidth = 255;
+  const baseRight =
+    onlinePanelWidth + 28;
+
+  const viewportWidth =
+    typeof window !== 'undefined'
+      ? window.innerWidth
+      : 1400;
+
+  const usableWidth =
+    Math.max(
+      chatWidth,
+      viewportWidth -
+        baseRight -
+        20
+    );
+
+  const perRow =
+    Math.max(
+      1,
+      Math.floor(
+        usableWidth /
+          (chatWidth + chatGap)
+      )
+    );
+
+  const column =
+    index % perRow;
+
+  const row =
+    Math.floor(
+      index / perRow
+    );
+
+  const right =
+    baseRight +
+    column *
+      (chatWidth + chatGap);
+
+  const bottom =
+    18 +
+    row *
+      (chatHeight + chatGap);
+
   return (
     <div
+      className="onstood-mini-chat-shell"
       style={{
         position: 'fixed',
-        right: 18,
-        bottom: 18,
-        width: 'min(430px, calc(100vw - 24px))',
-        height: 'min(600px, calc(100vh - 36px))',
+        right,
+        bottom,
+        width: `min(${chatWidth}px, calc(100vw - 24px))`,
+        height: `min(${chatHeight}px, calc(100vh - 36px))`,
         zIndex: 10030,
         background: '#fff',
         border: '1px solid rgba(0,0,0,0.12)',
-        borderRadius: 16,
-        boxShadow: '0 18px 60px rgba(0,0,0,0.22)',
-        overflow: 'hidden',
+        borderRadius: 14,
+        boxShadow: '0 12px 36px rgba(15,23,42,.18)',
+        overflow: 'visible',
         display: 'flex',
         flexDirection: 'column'
       }}
@@ -22348,7 +27391,7 @@ function MiniChat({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '10px 12px',
+          padding: '8px 10px',
           borderBottom: '1px solid rgba(0,0,0,0.08)',
           flex: '0 0 auto'
         }}
@@ -22375,8 +27418,10 @@ function MiniChat({
         style={{
           flex: 1,
           minHeight: 0,
-          overflow: 'auto',
-          padding: 10
+          overflow: 'hidden',
+          padding: 5,
+          background: '#fff',
+          borderRadius: '0 0 14px 14px'
         }}
       >
         <PostOffice
@@ -22430,7 +27475,18 @@ function Root() {
   const [confirmationMode, setConfirmationMode] =
     useState(() => {
       try {
-        return new URL(window.location.href).pathname === '/confirm-signup';
+        const url =
+          new URL(
+            window.location.href
+          );
+
+        return (
+          url.pathname ===
+            '/confirm-signup' ||
+          url.searchParams.get(
+            'onstood_confirm'
+          ) === '1'
+        );
       } catch {
         return false;
       }
@@ -22568,7 +27624,13 @@ function Root() {
 
         }
 
-        if (url.pathname === '/confirm-signup') {
+        if (
+          url.pathname ===
+            '/confirm-signup' ||
+          url.searchParams.get(
+            'onstood_confirm'
+          ) === '1'
+        ) {
 
           setConfirmationMode(true);
           setConfirmationStatus('checking');
