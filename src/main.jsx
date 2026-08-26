@@ -1,6 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { supabase } from './lib/supabase';
+import {
+  fmtDate,
+  safeDate,
+  safeDay,
+  safeMonth
+} from './utils/formatters';
+import Avatar from './components/Avatar';
+import NotificationBell from './components/NotificationBell';
+import AppNavigation from './components/AppNavigation';
+import {
+  Stat,
+  Page,
+  CourseTypeBadge
+} from './components/ui';
 import { createRoot } from 'react-dom/client';
-import { createClient } from '@supabase/supabase-js';
 import {
   Activity,
   AlertTriangle,
@@ -39,7 +53,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V29.18.3-MOBILE-MESSAGES-FOCUS';
+const ONSTOOD_BUILD = 'V30-BETA-PHASE2-NAV-NOTIFICATIONS';
 console.log('%cOopss, only for developers!', 'font-size:28px;font-weight:900;color:#6558ff;');
 console.log('%cThis area is intended for ONSTOOD developers. Never paste code here that someone sent you — it could compromise your ONSTOOD account.', 'font-size:13px;font-weight:600;color:#64748b;');
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
@@ -49,10 +63,6 @@ console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
    SUPABASE
    ========================================================= */
 
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
-);
 
 
 /* =========================================================
@@ -127,242 +137,23 @@ function getInitialSection() {
    HELPERS
    ========================================================= */
 
-function initials(profile) {
-  const first =
-    profile?.name?.trim()?.[0] || 'S';
 
-  const last =
-    profile?.surname?.trim()?.[0] || '';
 
-  return `${first}${last}`.toUpperCase();
-}
 
 
 
-function fmtDate(value) {
-  if (!value) return '';
 
-  try {
-    const date = new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
-      return '';
-    }
 
-    return new Intl.DateTimeFormat(
-      'en-GB',
-      {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit'
-      }
-    ).format(date);
 
-  } catch {
-    return '';
-  }
-}
 
 
-function safeDate(value) {
-  if (!value) {
-    return null;
-  }
 
-  const date = new Date(value);
 
-  return Number.isNaN(
-    date.getTime()
-  )
-    ? null
-    : date;
-}
 
 
-function safeDay(value) {
-  const date =
-    safeDate(value);
 
-  return date
-    ? date.getDate()
-    : '—';
-}
 
-
-function safeMonth(value) {
-  const date =
-    safeDate(value);
-
-  if (!date) {
-    return '';
-  }
-
-  try {
-    return date.toLocaleString(
-      'en',
-      {
-        month: 'short'
-      }
-    );
-  } catch {
-    return '';
-  }
-}
-
-
-function Avatar({
-  profile,
-  size = '',
-  onImageClick
-}) {
-
-  const [src, setSrc] =
-    useState(null);
-
-
-  useEffect(() => {
-
-    let active = true;
-
-
-    async function loadAvatar() {
-
-      const path =
-        profile?.avatar_url;
-
-
-      if (!path) {
-
-        if (active) {
-          setSrc(null);
-        }
-
-        return;
-      }
-
-
-      /*
-       * Compatibility with an existing
-       * complete URL.
-       */
-
-      if (
-        path.startsWith('http://') ||
-        path.startsWith('https://')
-      ) {
-
-        if (active) {
-          setSrc(path);
-        }
-
-        return;
-      }
-
-
-      const {
-        data,
-        error
-      } = await supabase.storage
-        .from('avatars')
-        .createSignedUrl(
-          path,
-          60 * 60
-        );
-
-
-      if (
-        !error &&
-        data?.signedUrl &&
-        active
-      ) {
-
-        setSrc(data.signedUrl);
-
-      } else if (active) {
-
-        setSrc(null);
-
-      }
-
-    }
-
-
-    loadAvatar();
-
-
-    return () => {
-      active = false;
-    };
-
-  }, [profile?.avatar_url]);
-
-
-  function handleImageClick(event) {
-
-    event.stopPropagation();
-
-    if (
-      src &&
-      typeof onImageClick === 'function'
-    ) {
-
-      onImageClick(src);
-
-    }
-
-  }
-
-
-  return (
-
-    <div
-      className={`avatar ${size}`}
-      onClick={
-        src && onImageClick
-          ? handleImageClick
-          : undefined
-      }
-      style={{
-        cursor:
-          src && onImageClick
-            ? 'zoom-in'
-            : 'default'
-      }}
-      title={
-        src && onImageClick
-          ? 'View profile photo'
-          : undefined
-      }
-    >
-
-      {src ? (
-
-        <img
-          src={src}
-          alt={
-            `${profile?.name || ''} ${profile?.surname || ''}`
-              .trim()
-          }
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            borderRadius: 'inherit',
-            display: 'block'
-          }}
-        />
-
-      ) : (
-
-        initials(profile)
-
-      )}
-
-    </div>
-
-  );
-}
 
    /* 
    =========================================================
@@ -952,19 +743,15 @@ function Auth({ onReady }) {
 
                 <button
                   type="button"
-                  className={
-                    form.account_type === 'employer'
-                      ? 'active'
-                      : ''
-                  }
-                  onClick={() =>
-                    setField(
-                      'account_type',
-                      'employer'
-                    )
-                  }
+                  disabled
+                  aria-disabled="true"
+                  title="Employer accounts are coming soon"
+                  style={{
+                    opacity: .52,
+                    cursor: 'not-allowed'
+                  }}
                 >
-                  Employer
+                  Employer · Coming soon
                 </button>
               </div>
             </div>
@@ -1600,12 +1387,98 @@ function App({ session }) {
       window.matchMedia('(max-width: 767px)').matches
     );
 
+  const [mobileMoreOpen, setMobileMoreOpen] =
+    useState(false);
+
+  useEffect(() => {
+    /*
+     * ONSTOOD browser-back boundary.
+     *
+     * App sections are state-driven, not browser pages. We therefore keep
+     * one protected history entry in front of the real entry. Pressing the
+     * Android/Chrome Back button lands on the boundary entry; ONSTOOD then
+     * returns to Home and immediately moves forward to the protected entry.
+     * Repeated Back presses on Home stay inside ONSTOOD.
+     */
+    const appUrl =
+      `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    const boundaryState = {
+      ...(window.history.state || {}),
+      onstood_app: true,
+      onstood_history_boundary: true
+    };
+
+    const protectedState = {
+      onstood_app: true,
+      onstood_history_protected: true
+    };
+
+    try {
+      window.history.replaceState(boundaryState, '', appUrl);
+      window.history.pushState(protectedState, '', appUrl);
+    } catch {}
+
+    let restoringProtectedEntry = false;
+
+    const goHomeInsideOnstood = () => {
+      setRequestedProfileId(null);
+      setMessageConversationId(null);
+      setMessageTargetUserId(null);
+      setMiniChats([]);
+      setMobileMoreOpen(false);
+      setShowNotifications(false);
+      setSection('home');
+    };
+
+    const handleBackInsideOnstood = event => {
+      if (restoringProtectedEntry) {
+        restoringProtectedEntry = false;
+        return;
+      }
+
+      goHomeInsideOnstood();
+
+      /*
+       * Do not create an endless pile of pushState entries. The Back action
+       * moved from the protected entry to our boundary entry, so move forward
+       * to the already-existing protected entry. This is what keeps both the
+       * Android system Back gesture/button and Chrome Back inside ONSTOOD.
+       */
+      if (event.state?.onstood_history_boundary) {
+        restoringProtectedEntry = true;
+        try {
+          window.history.forward();
+        } catch {
+          restoringProtectedEntry = false;
+        }
+        return;
+      }
+
+      /* Safety net for browsers restoring an unusual/stale history state. */
+      try {
+        window.history.pushState(protectedState, '', appUrl);
+      } catch {}
+    };
+
+    window.addEventListener('popstate', handleBackInsideOnstood);
+
+    return () => {
+      window.removeEventListener('popstate', handleBackInsideOnstood);
+    };
+  }, []);
+
   useEffect(() => {
     const media =
       window.matchMedia('(max-width: 767px)');
 
-    const update = () =>
+    const update = () => {
       setIsMobileViewport(media.matches);
+
+      if (!media.matches) {
+        setMobileMoreOpen(false);
+      }
+    };
 
     media.addEventListener?.('change', update);
 
@@ -3254,255 +3127,28 @@ function App({ session }) {
         </div>
 
         <div className="top-actions">
-<div
-  style={{
-    position: 'relative'
-  }}
->
-
-  <button
-    type="button"
-    className="icon-btn notification-btn"
-    aria-label="Notifications"
-    aria-expanded={showNotifications}
-    onClick={() =>
-      setShowNotifications(
-        current => !current
-      )
-    }
-    style={{
-      position: 'relative'
-    }}
-  >
-    <Bell size={19} />
-
-    {unreadNotificationCount > 0 && (
-      <span
-        style={{
-          position: 'absolute',
-          top: -6,
-          right: -6,
-          minWidth: 18,
-          height: 18,
-          padding: '0 5px',
-          borderRadius: 999,
-          background: '#ef4444',
-          color: '#fff',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 10,
-          fontWeight: 800,
-          lineHeight: 1,
-          boxShadow:
-            '0 2px 6px rgba(0,0,0,0.25)'
-        }}
-      >
-        {unreadNotificationCount > 99
-          ? '99+'
-          : unreadNotificationCount}
-      </span>
-    )}
-  </button>
-
-
-  {showNotifications && (
-    <div
-      role="dialog"
-      aria-label="Notifications"
-      style={{
-        position: 'absolute',
-        top: 'calc(100% + 12px)',
-        right: 0,
-        width: 'min(390px, 88vw)',
-        maxHeight: 'min(560px, 72vh)',
-        overflow: 'hidden',
-        background: '#fff',
-        border: '1px solid rgba(15,23,42,0.12)',
-        borderRadius: 16,
-        boxShadow:
-          '0 22px 60px rgba(15,23,42,0.20)',
-        zIndex: 1000
-      }}
-    >
-
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-          padding: '14px 16px',
-          borderBottom:
-            '1px solid rgba(15,23,42,0.08)'
-        }}
-      >
-        <div>
-          <strong>Notifications</strong>
-          <div
-            style={{
-              marginTop: 2,
-              fontSize: 12,
-              opacity: 0.65
-            }}
-          >
-            {unreadNotificationCount > 0
-              ? `${unreadNotificationCount} unread`
-              : 'You are all caught up'}
-          </div>
-        </div>
-
-        {unreadNotificationCount > 0 && (
-          <button
-            type="button"
-            className="btn subtle"
-            onClick={markAllNotificationsRead}
-            style={{
-              padding: '7px 10px',
-              fontSize: 12
-            }}
-          >
-            Mark all read
-          </button>
-        )}
-      </div>
-
-
-      <div
-        style={{
-          overflowY: 'auto',
-          maxHeight: 'min(490px, 64vh)'
-        }}
-      >
-
-        {notifications.length === 0 ? (
-          <div
-            style={{
-              padding: 24,
-              textAlign: 'center',
-              opacity: 0.65
-            }}
-          >
-            No notifications yet.
-          </div>
-        ) : (
-          notifications.map(notification => {
-
-            const targetSection =
-              getNotificationSection(
-                notification.kind
-              );
-
-            const unread =
-              !notification.read_at;
-
-            return (
-              <button
-                key={
-                  notification.id ||
-                  `${notification.kind}-${notification.created_at}`
-                }
-                type="button"
-                onClick={() =>
-                  openNotification(notification)
-                }
-                style={{
-                  width: '100%',
-                  border: 0,
-                  borderBottom:
-                    '1px solid rgba(15,23,42,0.07)',
-                  background: unread
-                    ? 'rgba(59,130,246,0.07)'
-                    : '#fff',
-                  padding: '13px 16px',
-                  display: 'grid',
-                  gridTemplateColumns:
-                    '10px 1fr auto',
-                  gap: 10,
-                  textAlign: 'left',
-                  cursor: targetSection
-                    ? 'pointer'
-                    : 'default',
-                  color: 'inherit'
-                }}
-              >
-
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    marginTop: 6,
-                    background: unread
-                      ? '#2563eb'
-                      : 'transparent'
-                  }}
-                />
-
-                <span>
-                  <strong
-                    style={{
-                      display: 'block',
-                      fontSize: 13
-                    }}
-                  >
-                    {notification.title ||
-                      'ONSTOOD notification'}
-                  </strong>
-
-                  {(notification.body ||
-                    notification.message) && (
-                    <span
-                      style={{
-                        display: 'block',
-                        marginTop: 3,
-                        fontSize: 12,
-                        lineHeight: 1.4,
-                        opacity: 0.72
-                      }}
-                    >
-                      {notification.body ||
-                        notification.message}
-                    </span>
-                  )}
-
-                  {notification.created_at && (
-                    <small
-                      style={{
-                        display: 'block',
-                        marginTop: 5,
-                        opacity: 0.52
-                      }}
-                    >
-                      {fmtDate(
-                        notification.created_at
-                      )}
-                    </small>
-                  )}
-                </span>
-
-                {targetSection && (
-                  <ChevronRight
-                    size={15}
-                    style={{
-                      marginTop: 3,
-                      opacity: 0.45
-                    }}
-                  />
-                )}
-
-              </button>
-            );
-          })
-        )}
-
-      </div>
-
-    </div>
-  )}
-
-</div>
+<NotificationBell
+            show={showNotifications}
+            unreadCount={unreadNotificationCount}
+            notifications={notifications}
+            onToggle={() =>
+              setShowNotifications(
+                current => !current
+              )
+            }
+            onClose={() =>
+              setShowNotifications(false)
+            }
+            onMarkAllRead={
+              markAllNotificationsRead
+            }
+            getTargetSection={
+              getNotificationSection
+            }
+            onOpenNotification={
+              openNotification
+            }
+          />
 
           <button
             type="button"
@@ -3520,25 +3166,15 @@ function App({ session }) {
                 );
 
               if (latestMessageNotification) {
-                const conversationId =
+                openNotification(
                   latestMessageNotification
-                    ?.metadata?.conversation_id || null;
-
-                const senderId =
-                  latestMessageNotification
-                    ?.metadata?.sender_id || null;
-
-                setMessageConversationId(conversationId);
-                setMessageTargetUserId(
-                  conversationId ? null : senderId
                 );
-              } else {
-                setMessageConversationId(null);
-                setMessageTargetUserId(null);
+                return;
               }
 
+              setMessageConversationId(null);
+              setMessageTargetUserId(null);
               setSection('messages');
-              markSectionNotificationsRead('messages');
             }}
             style={{
               position: 'relative'
@@ -3601,135 +3237,64 @@ function App({ session }) {
 
         {/* SIDEBAR */}
 
-        <aside className="sidebar">
-
-          <button
-            className="profile-mini"
-            onClick={() => setSection('profile')}
-          >
-            <Avatar profile={profile} />
-
-            <div>
-              <b>
-                {profile.name} {profile.surname}
-              </b>
-
-              <small>
-                {
-                  profile.account_type === 'employer'
-                    ? (
-                      profile.company_name ||
-                      'Employer'
-                    )
-                    : (
-                      profile.university ||
-                      'Student'
-                    )
-                }
-              </small>
-            </div>
-          </button>
-
-
-     
-        <nav>
-
-  {activeNav.map(([id, label, Icon]) => {
-
-    const count = notificationCounts[id] || 0;
-
-    return (
-
-      <button
-  key={id}
-  className={
-    section === id
-      ? 'selected'
-      : ''
-  }
-  onClick={() => {
-    setSection(id);
-    markSectionNotificationsRead(id);
-  }}
-      >
-
-        <span
-          style={{
-            position: 'relative',
-            display: 'inline-flex'
+        <AppNavigation
+          profile={profile}
+          section={section}
+          activeNav={activeNav}
+          notificationCounts={
+            notificationCounts
+          }
+          mobileMoreOpen={
+            mobileMoreOpen
+          }
+          onSetMobileMoreOpen={
+            setMobileMoreOpen
+          }
+          onNavigate={id => {
+            setSection(id);
+            markSectionNotificationsRead(
+              id
+            );
           }}
-        >
+          onMobileNavigate={key => {
+            if (key === 'messages') {
+              const latestMessageNotification =
+                notifications.find(
+                  item =>
+                    !item.read_at &&
+                    (
+                      item.kind ===
+                        'message' ||
+                      item.kind ===
+                        'message_mention'
+                    )
+                );
 
-          <Icon size={18} />
+              if (
+                latestMessageNotification
+              ) {
+                openNotification(
+                  latestMessageNotification
+                );
+                return;
+              }
 
-          {count > 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                top: '-12px',
-                right: '-14px',
-                minWidth: '20px',
-                height: '17px',
-                padding: '0 5px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: '#ef4444',
-                color: '#fff',
-                borderRadius: '10px',
-                fontSize: '10px',
-                fontWeight: '700',
-                lineHeight: '1',
-                zIndex: 5,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.25)'
-              }}
-            >
+              setMessageConversationId(
+                null
+              );
+              setMessageTargetUserId(
+                null
+              );
+            }
 
-              {count > 99 ? '99+' : count}
+            setSection(key);
+          }}
+          onProfile={() =>
+            setSection('profile')
+          }
+          onLogout={logout}
+        />
 
-              <span
-                style={{
-                  position: 'absolute',
-                  bottom: '-3px',
-                  left: '4px',
-                  width: '6px',
-                  height: '6px',
-                  background: '#ef4444',
-                  borderRadius: '50%'
-                }}
-              />
-
-            </span>
-          )}
-
-        </span>
-
-        <span>{label}</span>
-
-        {id === 'ai' && (
-          <em>NEW</em>
-        )}
-
-      </button>
-
-    );
-
-  })}
-
-    </nav>
-
-
-
-
-          <button
-            className="logout"
-            onClick={logout}
-          >
-            <LogOut size={18} />
-            Sign out
-          </button>
-
-        </aside>
 
 
         {/* MAIN */}
@@ -4177,6 +3742,27 @@ function App({ session }) {
           display: none !important;
         }
 
+
+        .mobile-bottom-nav,
+        .mobile-more-backdrop {
+          display: none;
+        }
+
+
+        .notification-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 999;
+          border: 0;
+          padding: 0;
+          margin: 0;
+          background: transparent;
+        }
+
+        .notification-panel {
+          z-index: 1000 !important;
+        }
+
         /* ===================================================
            ONSTOOD RESPONSIVE FOUNDATION
            Desktop: >= 1181px
@@ -4438,6 +4024,182 @@ function App({ session }) {
             gap: 2px !important;
           }
 
+
+          /* Mobile notifications */
+          .notification-panel {
+            position: fixed !important;
+            top: 76px !important;
+            left: 8px !important;
+            right: 8px !important;
+            width: auto !important;
+            max-width: none !important;
+            max-height: calc(100dvh - 96px) !important;
+            border-radius: 16px !important;
+          }
+
+          .notification-panel-head {
+            gap: 8px !important;
+            padding: 10px 12px !important;
+          }
+
+          .notification-panel-head strong {
+            font-size: 14px !important;
+          }
+
+          .notification-panel-head .btn {
+            padding: 6px 8px !important;
+            font-size: 10px !important;
+            white-space: nowrap !important;
+          }
+
+          .notification-list {
+            max-height: calc(100dvh - 154px) !important;
+          }
+
+          .notification-row {
+            padding: 8px 9px !important;
+            gap: 6px !important;
+            grid-template-columns: 7px minmax(0,1fr) 14px !important;
+          }
+
+          .notification-row strong {
+            font-size: 11.5px !important;
+            line-height: 1.2 !important;
+          }
+
+          .notification-row span {
+            font-size: 10.5px !important;
+            line-height: 1.25 !important;
+          }
+
+          .notification-row small {
+            font-size: 9.5px !important;
+            margin-top: 2px !important;
+          }
+
+
+          .onstood-post-composer {
+            padding: 10px !important;
+          }
+
+          .onstood-post-composer textarea {
+            font-size: 16px !important;
+          }
+
+          .onstood-post-composer .btn,
+          .onstood-post-composer select {
+            min-height: 40px !important;
+          }
+
+          /* Mobile ONSTOOD AI: history becomes a small top strip,
+             while the conversation gets the screen. */
+          .onstood-ai-workspace {
+            display: flex !important;
+            flex-direction: column !important;
+            min-height: calc(100dvh - 220px) !important;
+          }
+
+          .onstood-ai-history {
+            width: 100% !important;
+            max-width: 100% !important;
+            border-right: 0 !important;
+            border-bottom: 1px solid rgba(0,0,0,.08) !important;
+            padding: 8px 10px !important;
+            gap: 6px !important;
+            flex: 0 0 auto !important;
+          }
+
+          .onstood-ai-history > div:first-child {
+            display: none !important;
+          }
+
+          .onstood-ai-history > small {
+            display: none !important;
+          }
+
+          .onstood-ai-history > div:last-child {
+            display: flex !important;
+            gap: 6px !important;
+            overflow-x: auto !important;
+            overflow-y: hidden !important;
+            max-height: none !important;
+            padding-bottom: 2px !important;
+            scrollbar-width: none;
+          }
+
+          .onstood-ai-history > div:last-child::-webkit-scrollbar {
+            display: none;
+          }
+
+          .onstood-ai-history > div:last-child button {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            max-width: 190px !important;
+            min-width: 120px !important;
+            margin: 0 !important;
+            padding: 7px 9px !important;
+          }
+
+          .onstood-ai-history > div:last-child button b {
+            font-size: 11px !important;
+          }
+
+          .onstood-ai-history > div:last-child button small {
+            font-size: 9px !important;
+          }
+
+          .onstood-ai-chat {
+            min-height: 0 !important;
+            flex: 1 1 auto !important;
+          }
+
+          .onstood-ai-messages {
+            min-height: 52dvh !important;
+            max-height: none !important;
+            padding: 12px !important;
+          }
+
+          .onstood-ai-composer-wrap {
+            padding: 9px !important;
+            background: #fff !important;
+            position: sticky !important;
+            bottom: 0 !important;
+            z-index: 18 !important;
+          }
+
+          .onstood-ai-usage-row {
+            gap: 5px !important;
+            margin-bottom: 6px !important;
+          }
+
+          .onstood-ai-usage-row small {
+            font-size: 9.5px !important;
+          }
+
+          .onstood-ai-composer {
+            gap: 6px !important;
+          }
+
+          .onstood-ai-composer input {
+            min-width: 0 !important;
+            font-size: 16px !important;
+          }
+
+          .onstood-ai-composer .onstood-advanced-chip {
+            width: 118px !important;
+            min-width: 118px !important;
+            padding: 0 7px !important;
+          }
+
+          .onstood-ai-composer .onstood-chip-title {
+            font-size: 8px !important;
+            letter-spacing: .35px !important;
+          }
+
+          .onstood-ai-composer .onstood-chip-count {
+            display: none !important;
+          }
+
           .top-actions .icon-btn {
             width: 34px !important;
             height: 34px !important;
@@ -4452,68 +4214,138 @@ function App({ session }) {
             display: block !important;
             width: 100% !important;
             max-width: 100vw !important;
-            padding: 0 10px 88px !important;
+            padding: 0 10px calc(88px + env(safe-area-inset-bottom)) !important;
             box-sizing: border-box !important;
           }
 
-          .sidebar {
-            position: fixed !important;
-            left: 8px !important;
-            right: 8px !important;
-            bottom: 8px !important;
-            top: auto !important;
-            width: auto !important;
-            max-width: none !important;
-            min-width: 0 !important;
-            height: auto !important;
-            z-index: 12000 !important;
-            padding: 6px !important;
-            border: 1px solid rgba(148,163,184,.22) !important;
-            border-radius: 18px !important;
-            background: rgba(255,255,255,.96) !important;
-            backdrop-filter: blur(18px) !important;
-            box-shadow: 0 14px 40px rgba(15,23,42,.16) !important;
-          }
-
-          .sidebar .profile-mini {
+          .desktop-sidebar {
             display: none !important;
           }
 
-          .sidebar nav {
-            display: flex !important;
-            align-items: center !important;
-            justify-content: space-around !important;
-            gap: 2px !important;
-            overflow-x: auto !important;
-            scrollbar-width: none;
-          }
-
-          .sidebar nav::-webkit-scrollbar {
-            display: none;
-          }
-
-          .sidebar nav button {
-            flex: 0 0 52px !important;
-            width: 52px !important;
-            min-width: 52px !important;
-            height: 48px !important;
-            padding: 0 !important;
+          .mobile-bottom-nav {
+            position: fixed;
             display: grid !important;
-            place-items: center !important;
-            border-radius: 13px !important;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            left: 8px;
+            right: 8px;
+            bottom: max(8px, env(safe-area-inset-bottom));
+            z-index: 24000;
+            min-height: 62px;
+            padding: 6px 5px;
+            border: 1px solid rgba(148,163,184,.22);
+            border-radius: 20px;
+            background: rgba(255,255,255,.97);
+            backdrop-filter: blur(18px);
+            box-shadow: 0 14px 40px rgba(15,23,42,.16);
           }
 
-          .sidebar nav button > span:not(.nav-badge),
-          .sidebar nav button small {
-            display: none !important;
+          .mobile-nav-item {
+            position: relative;
+            border: 0;
+            background: transparent;
+            min-width: 0;
+            min-height: 50px;
+            padding: 5px 2px;
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            color: #64748b;
+            font-size: 10px;
+            font-weight: 800;
+            cursor: pointer;
           }
 
-          .sidebar nav button svg {
-            margin: 0 !important;
+          .mobile-nav-item.active {
+            color: #4338ca;
+            background: rgba(79,70,229,.09);
           }
 
-          .sidebar > button:last-child {
-            display: none !important;
+          .mobile-nav-item span {
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+
+          .mobile-nav-badge {
+            position: absolute;
+            top: 2px;
+            right: 18%;
+            min-width: 16px;
+            height: 16px;
+            padding: 0 4px;
+            border-radius: 999px;
+            display: grid;
+            place-items: center;
+            background: #ef4444;
+            color: #fff !important;
+            font-size: 9px;
+            line-height: 1;
+            box-shadow: 0 0 0 2px #fff;
+          }
+
+          .mobile-more-backdrop {
+            position: fixed;
+            inset: 0;
+            z-index: 25000;
+            display: flex !important;
+            align-items: flex-end;
+            background: rgba(15,23,42,.30);
+          }
+
+          .mobile-more-sheet {
+            width: 100%;
+            max-height: min(68dvh, 520px);
+            overflow-y: auto;
+            padding:
+              8px 14px
+              calc(18px + env(safe-area-inset-bottom));
+            border-radius: 24px 24px 0 0;
+            background: #fff;
+            box-shadow: 0 -18px 50px rgba(15,23,42,.18);
+          }
+
+          .mobile-more-handle {
+            width: 38px;
+            height: 4px;
+            border-radius: 999px;
+            background: rgba(100,116,139,.28);
+            margin: 2px auto 10px;
+          }
+
+          .mobile-more-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 17px;
+            font-weight: 900;
+            padding: 2px 2px 12px;
+          }
+
+          .mobile-more-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0,1fr));
+            gap: 9px;
+          }
+
+          .mobile-more-grid button {
+            border: 1px solid rgba(148,163,184,.20);
+            background: rgba(248,250,252,.92);
+            border-radius: 15px;
+            min-height: 74px;
+            padding: 10px 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            color: #334155;
+            font-size: 11px;
+            font-weight: 800;
           }
 
           .content {
@@ -4634,11 +4466,25 @@ function App({ session }) {
             width: 100% !important;
             min-width: 0 !important;
             max-width: 100% !important;
+            min-height: 0 !important;
+            height: auto !important;
+            max-height: none !important;
+            border-radius: 16px !important;
+            overflow: hidden !important;
+          }
+
+          /* On portrait mobile the empty conversation pane must not exist.
+             It was the large white card covering Profile/Home. */
+          .postoffice-conversation-card:not(:has(.postoffice-message-scroll)) {
+            display: none !important;
+          }
+
+          /* Once a conversation is actually open, use the available screen. */
+          .postoffice-conversation-card:has(.postoffice-message-scroll) {
+            display: flex !important;
             min-height: calc(100dvh - 150px) !important;
             height: calc(100dvh - 150px) !important;
             max-height: calc(100dvh - 150px) !important;
-            border-radius: 16px !important;
-            overflow: hidden !important;
           }
 
           .postoffice-message-scroll {
@@ -4660,6 +4506,47 @@ function App({ session }) {
           .postoffice-composer input:not([type="file"]) {
             min-height: 40px !important;
             font-size: 16px !important;
+          }
+
+
+          /* Conversation options are a bottom sheet on mobile.
+             Never let the desktop popup become a thin clipped column. */
+          .conversation-options-menu {
+            position: fixed !important;
+            left: 8px !important;
+            right: 8px !important;
+            top: auto !important;
+            bottom: calc(82px + env(safe-area-inset-bottom)) !important;
+            width: auto !important;
+            max-width: none !important;
+            max-height: min(62dvh, 520px) !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            padding: 8px !important;
+            border-radius: 18px !important;
+            z-index: 32000 !important;
+            box-shadow: 0 -14px 46px rgba(15,23,42,.22) !important;
+          }
+
+          .conversation-options-menu > button {
+            min-height: 42px !important;
+            font-size: 14px !important;
+          }
+
+          .conversation-label-grid {
+            display: grid !important;
+            grid-template-columns:
+              repeat(2, minmax(0, 1fr)) !important;
+            gap: 6px !important;
+            padding: 6px 8px 9px !important;
+          }
+
+          .conversation-label-grid button {
+            width: 100% !important;
+            min-width: 0 !important;
+            justify-content: center !important;
+            font-size: 12px !important;
+            min-height: 36px !important;
           }
         }
 
@@ -4877,6 +4764,8 @@ function HomePage({
   const [postFiles, setPostFiles] = useState([]);
   const [postAudience, setPostAudience] = useState('public');
   const [publishing, setPublishing] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
 
   const [
     openAiSuggestedPostId,
@@ -5129,6 +5018,51 @@ function HomePage({
   }, [profile.id]);
 
 
+  function addPostFiles(fileList) {
+    const incoming =
+      Array.from(fileList || []);
+
+    if (!incoming.length) {
+      return;
+    }
+
+    setPostFiles(current => {
+      const next = [
+        ...current,
+        ...incoming
+      ];
+
+      const unique = [];
+      const seen = new Set();
+
+      for (const file of next) {
+        const key =
+          `${file.name}:${file.size}:${file.lastModified}`;
+
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(file);
+        }
+      }
+
+      return unique.slice(0, 12);
+    });
+
+    setComposerOpen(true);
+    setAttachMenuOpen(false);
+  }
+
+
+  function removePostFile(index) {
+    setPostFiles(current =>
+      current.filter(
+        (_, currentIndex) =>
+          currentIndex !== index
+      )
+    );
+  }
+
+
   async function publish() {
 
     const body = text.trim();
@@ -5144,17 +5078,84 @@ function HomePage({
       return;
     }
 
-    const oversized = files.find(file => file.size > 50 * 1024 * 1024);
-    if (oversized) {
-      notify('Each photo/video must be smaller than 50 MB.');
+    const blockedExtensions =
+      [
+        'exe',
+        'msi',
+        'bat',
+        'cmd',
+        'com',
+        'scr',
+        'ps1',
+        'sh',
+        'js',
+        'jar'
+      ];
+
+    const invalid = files.find(file => {
+      const extension =
+        String(file.name || '')
+          .split('.')
+          .pop()
+          ?.toLowerCase() || '';
+
+      const isImage =
+        file.type?.startsWith('image/');
+
+      const isVideo =
+        file.type?.startsWith('video/');
+
+      const isDocument =
+        [
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'text/plain',
+          'text/csv'
+        ].includes(file.type);
+
+      return (
+        blockedExtensions.includes(
+          extension
+        ) ||
+        !(
+          isImage ||
+          isVideo ||
+          isDocument
+        )
+      );
+    });
+
+    if (invalid) {
+      notify(
+        'Choose a photo, video, PDF, Word, Excel, PowerPoint, TXT or CSV file.'
+      );
       return;
     }
 
-    const invalid = files.find(file =>
-      !(file.type?.startsWith('image/') || file.type?.startsWith('video/'))
-    );
-    if (invalid) {
-      notify('Only photos and videos can be attached.');
+    const oversized = files.find(file => {
+      const isDocument =
+        !file.type?.startsWith('image/') &&
+        !file.type?.startsWith('video/');
+
+      return file.size >
+        (
+          isDocument
+            ? 25
+            : 50
+        ) *
+        1024 *
+        1024;
+    });
+
+    if (oversized) {
+      notify(
+        'Photos/videos may be up to 50 MB and documents up to 25 MB.'
+      );
       return;
     }
 
@@ -5222,7 +5223,9 @@ function HomePage({
         const mediaType =
           file.type?.startsWith('video/')
             ? 'video'
-            : 'image';
+            : file.type?.startsWith('image/')
+              ? 'image'
+              : 'document';
 
         const { data: mediaData, error: mediaError } =
           await supabase
@@ -5233,6 +5236,7 @@ function HomePage({
               media_type: mediaType,
               storage_path: path,
               mime_type: file.type || null,
+              caption: file.name || null,
               sort_order: index
             })
             .select('*')
@@ -5265,12 +5269,21 @@ function HomePage({
       setText('');
       setPostFiles([]);
       setPostAudience('public');
+      setComposerOpen(false);
+      setAttachMenuOpen(false);
 
-      const input =
-        document.getElementById('onstood-post-media-input');
-      if (input) {
-        input.value = '';
-      }
+      [
+        'onstood-post-photo-input',
+        'onstood-post-video-input',
+        'onstood-post-document-input'
+      ].forEach(id => {
+        const input =
+          document.getElementById(id);
+
+        if (input) {
+          input.value = '';
+        }
+      });
 
       notify('Post published.');
 
@@ -6137,7 +6150,7 @@ function HomePage({
 
 
       <div
-        className="feed-card card"
+        className="feed-card card onstood-post-composer"
         style={{
           padding: 14
         }}
@@ -6145,125 +6158,323 @@ function HomePage({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'auto minmax(0,1fr) auto',
+            gridTemplateColumns:
+              'auto minmax(0,1fr)',
             gap: 10,
             alignItems: 'start'
           }}
         >
           <Avatar profile={profile} />
 
-          <textarea
-            name="new-post"
-            placeholder="Share a question, idea, photo or video…"
-            value={text}
-            onChange={event =>
-              setText(
-                event.target.value
-              )
-            }
+          <div
             style={{
-              width: '100%',
-              minHeight: 68,
-              maxHeight: 120,
-              margin: 0,
-              resize: 'vertical',
-              borderRadius: 12,
-              padding: '12px 14px'
-            }}
-          />
-
-          <label
-            title="Choose one or more photos/videos"
-            style={{
-              height: 46,
-              padding: '0 14px',
-              border: '1px solid #dfe3ec',
-              borderRadius: 12,
-              background: '#fff',
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 7,
-              cursor: 'pointer',
-              fontWeight: 800,
-              whiteSpace: 'nowrap',
-              alignSelf: 'center'
+              minWidth: 0
             }}
           >
-            <Paperclip size={15} />
-            {postFiles.length > 0
-              ? `${postFiles.length} selected`
-              : 'Photo / Video'}
-
-            <input
-              id="onstood-post-media-input"
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
-              multiple
-              hidden
-              onChange={event =>
-                setPostFiles(
-                  Array.from(
-                    event.target.files || []
-                  )
-                )
+            <textarea
+              name="new-post"
+              placeholder="Share a question, idea, photo, video or document…"
+              value={text}
+              onFocus={() =>
+                setComposerOpen(true)
               }
+              onChange={event => {
+                setText(
+                  event.target.value
+                );
+                setComposerOpen(true);
+              }}
+              style={{
+                width: '100%',
+                minHeight:
+                  composerOpen
+                    ? 72
+                    : 52,
+                maxHeight: 150,
+                margin: 0,
+                resize: 'vertical',
+                borderRadius: 12,
+                padding: '12px 14px'
+              }}
             />
-          </label>
-        </div>
 
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginTop: 10,
-            paddingLeft: 46
-          }}
-        >
-          <select
-            value={postAudience}
-            onChange={event =>
-              setPostAudience(
-                event.target.value
-              )
-            }
-            title="Who can see this post?"
-            style={{
-              width: 138,
-              minWidth: 138,
-              height: 42,
-              margin: 0,
-              padding: '0 32px 0 12px',
-              borderRadius: 10,
-              fontSize: 14,
-              lineHeight: 1.2
-            }}
-          >
-            <option value="public">
-              Public
-            </option>
-            <option value="connections">
-              Connections
-            </option>
-            <option value="only_me">
-              Only me
-            </option>
-          </select>
+            {(composerOpen ||
+              text.trim() ||
+              postFiles.length > 0) && (
+              <>
+                {postFiles.length > 0 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 6,
+                      marginTop: 8
+                    }}
+                  >
+                    {postFiles.map(
+                      (file, index) => {
+                        const kind =
+                          file.type?.startsWith(
+                            'image/'
+                          )
+                            ? '📷'
+                            : file.type?.startsWith(
+                                'video/'
+                              )
+                              ? '🎬'
+                              : '📄';
 
-          <button
-            className="btn primary"
-            onClick={publish}
-            disabled={publishing}
-            style={{
-              height: 42,
-              margin: 0,
-              padding: '0 16px'
-            }}
-          >
-            <Send size={16} />
-            {publishing ? 'Posting…' : 'Post'}
-          </button>
+                        return (
+                          <span
+                            key={`${file.name}-${file.size}-${index}`}
+                            className="chip"
+                            style={{
+                              display:
+                                'inline-flex',
+                              alignItems:
+                                'center',
+                              gap: 6,
+                              maxWidth:
+                                '100%'
+                            }}
+                          >
+                            <span>
+                              {kind}
+                            </span>
+
+                            <span
+                              style={{
+                                overflow:
+                                  'hidden',
+                                textOverflow:
+                                  'ellipsis',
+                                whiteSpace:
+                                  'nowrap',
+                                maxWidth:
+                                  190
+                              }}
+                              title={file.name}
+                            >
+                              {file.name}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removePostFile(
+                                  index
+                                )
+                              }
+                              aria-label={`Remove ${file.name}`}
+                              title="Remove attachment"
+                              style={{
+                                border: 0,
+                                background:
+                                  'transparent',
+                                cursor:
+                                  'pointer',
+                                padding: 0,
+                                lineHeight: 1
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      }
+                    )}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginTop: 9,
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'relative'
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="btn subtle"
+                      onClick={() =>
+                        setAttachMenuOpen(
+                          current =>
+                            !current
+                        )
+                      }
+                      title="Attach a photo, video or document"
+                      style={{
+                        height: 40,
+                        padding: '0 11px'
+                      }}
+                    >
+                      <Paperclip
+                        size={15}
+                      />
+                      Attach
+                    </button>
+
+                    {attachMenuOpen && (
+                      <div
+                        className="card"
+                        style={{
+                          position:
+                            'absolute',
+                          left: 0,
+                          bottom:
+                            'calc(100% + 7px)',
+                          zIndex: 15000,
+                          width: 190,
+                          padding: 6,
+                          boxShadow:
+                            '0 14px 38px rgba(15,23,42,.18)'
+                        }}
+                      >
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer',
+                            marginBottom: 4
+                          }}
+                        >
+                          📷 Photo
+                          <input
+                            id="onstood-post-photo-input"
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer',
+                            marginBottom: 4
+                          }}
+                        >
+                          🎬 Video
+                          <input
+                            id="onstood-post-video-input"
+                            type="file"
+                            accept="video/mp4,video/webm,video/quicktime"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent:
+                              'flex-start',
+                            cursor:
+                              'pointer'
+                          }}
+                        >
+                          📄 Document
+                          <input
+                            id="onstood-post-document-input"
+                            type="file"
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv"
+                            multiple
+                            hidden
+                            onChange={event =>
+                              addPostFiles(
+                                event.target
+                                  .files
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
+                  <select
+                    value={postAudience}
+                    onChange={event =>
+                      setPostAudience(
+                        event.target.value
+                      )
+                    }
+                    title="Who can see this post?"
+                    style={{
+                      width: 132,
+                      minWidth: 132,
+                      height: 40,
+                      margin: 0,
+                      padding:
+                        '0 30px 0 11px',
+                      borderRadius: 10,
+                      fontSize: 13
+                    }}
+                  >
+                    <option value="public">
+                      Public
+                    </option>
+                    <option value="connections">
+                      Connections
+                    </option>
+                    <option value="only_me">
+                      Only me
+                    </option>
+                  </select>
+
+                  <button
+                    className="btn primary"
+                    onClick={publish}
+                    disabled={
+                      publishing ||
+                      (
+                        !text.trim() &&
+                        postFiles.length === 0
+                      )
+                    }
+                    style={{
+                      height: 40,
+                      margin: 0,
+                      padding: '0 15px'
+                    }}
+                  >
+                    <Send size={16} />
+                    {publishing
+                      ? 'Posting…'
+                      : 'Post'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -6859,37 +7070,7 @@ function HomePage({
 }
 
 
-function Stat({
-  label,
-  value,
-  onClick
-}) {
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        className="stat"
-        onClick={onClick}
-        title={`Open ${label}`}
-        style={{
-          textAlign: 'left',
-          cursor: 'pointer',
-          width: '100%'
-        }}
-      >
-        <span>{value}</span>
-        <small>{label}</small>
-      </button>
-    );
-  }
 
-  return (
-    <div className="stat">
-      <span>{value}</span>
-      <small>{label}</small>
-    </div>
-  );
-}
 
 
 function Post({
@@ -6921,7 +7102,21 @@ function Post({
 
   const media =
     (post.post_media || [])
-      .filter(item => item.signed_url);
+      .filter(
+        item =>
+          item.signed_url &&
+          item.media_type !==
+            'document'
+      );
+
+  const documents =
+    (post.post_media || [])
+      .filter(
+        item =>
+          item.signed_url &&
+          item.media_type ===
+            'document'
+      );
 
   return (
     <article className="card post-card">
@@ -7100,6 +7295,56 @@ function Post({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {documents.length > 0 && (
+        <div
+          style={{
+            display: 'grid',
+            gap: 7,
+            marginTop:
+              post.body || media.length
+                ? 10
+                : 4
+          }}
+        >
+          {documents.map(item => (
+            <a
+              key={item.id}
+              href={item.signed_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn subtle"
+              style={{
+                justifyContent:
+                  'flex-start',
+                textDecoration:
+                  'none',
+                minHeight: 42,
+                padding: '8px 11px'
+              }}
+              title={
+                item.caption ||
+                'Open document'
+              }
+            >
+              <FileText size={16} />
+              <span
+                style={{
+                  overflow:
+                    'hidden',
+                  textOverflow:
+                    'ellipsis',
+                  whiteSpace:
+                    'nowrap'
+                }}
+              >
+                {item.caption ||
+                  'Attached document'}
+              </span>
+            </a>
+          ))}
         </div>
       )}
 
@@ -7404,42 +7649,7 @@ function Post({
 }
 
 
-function Page({
-  eyebrow,
-  title,
-  children,
-  action,
-  hideHeading = false
-}) {
 
-  return (
-    <>
-      {!hideHeading && (
-
-        <div className="page-heading">
-
-          <div>
-
-            <span className="eyebrow dark">
-              {eyebrow}
-            </span>
-
-            <h1>
-              {title}
-            </h1>
-
-          </div>
-
-          {action}
-
-        </div>
-
-      )}
-
-      {children}
-    </>
-  );
-}
 
 
 
@@ -8613,7 +8823,12 @@ function ProfileTimeline({
                   )}
 
                   {(post.post_media || [])
-                    .filter(media => media.signed_url)
+                    .filter(
+                      media =>
+                        media.signed_url &&
+                        media.media_type !==
+                          'document'
+                    )
                     .length > 0 && (
                     <div
                       style={{
@@ -8628,7 +8843,12 @@ function ProfileTimeline({
                       }}
                     >
                       {(post.post_media || [])
-                        .filter(media => media.signed_url)
+                        .filter(
+                          media =>
+                            media.signed_url &&
+                            media.media_type !==
+                              'document'
+                        )
                         .slice(0, 4)
                         .map(media => (
                           <div
@@ -8680,6 +8900,34 @@ function ProfileTimeline({
                     </div>
                   )}
 
+
+                  {(post.post_media || [])
+                    .filter(
+                      media =>
+                        media.signed_url &&
+                        media.media_type ===
+                          'document'
+                    )
+                    .map(media => (
+                      <a
+                        key={media.id}
+                        href={media.signed_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn subtle"
+                        style={{
+                          marginTop: 7,
+                          justifyContent:
+                            'flex-start',
+                          textDecoration:
+                            'none'
+                        }}
+                      >
+                        <FileText size={15} />
+                        {media.caption ||
+                          'Attached document'}
+                      </a>
+                    ))}
 
                   {post.shared_from_post_id && (
                     <small
@@ -11760,14 +12008,26 @@ function PostOffice({
       }
 
       if (
-        requestedConversationId &&
-        rows.some(item =>
-          item.conversation_id === requestedConversationId
-        )
+        requestedConversationId
       ) {
-        setSelectedConversationId(
-          requestedConversationId
-        );
+        const requestedRow =
+          rows.find(item =>
+            item.conversation_id ===
+              requestedConversationId
+          );
+
+        if (requestedRow) {
+          setInboxTab(
+            requestedRow.inbox_bucket ===
+              'requests'
+              ? 'requests'
+              : 'chats'
+          );
+
+          setSelectedConversationId(
+            requestedConversationId
+          );
+        }
       }
 
       setLoading(false);
@@ -11837,16 +12097,38 @@ function PostOffice({
 
   useEffect(() => {
 
+    if (!requestedConversationId) {
+      return;
+    }
+
+    const requestedRow =
+      conversations.find(item =>
+        item.conversation_id ===
+          requestedConversationId
+      );
+
+    if (requestedRow) {
+      setInboxTab(
+        requestedRow.inbox_bucket ===
+          'requests'
+          ? 'requests'
+          : 'chats'
+      );
+    }
+
     if (
-      requestedConversationId &&
-      requestedConversationId !== selectedConversationId
+      requestedConversationId !==
+        selectedConversationId
     ) {
       setSelectedConversationId(
         requestedConversationId
       );
     }
 
-  }, [requestedConversationId]);
+  }, [
+    requestedConversationId,
+    conversations
+  ]);
 
 
 
@@ -13929,7 +14211,7 @@ function PostOffice({
 
                   {conversationMenuOpen && (
                     <div
-                      className="card"
+                      className="card conversation-options-menu"
                       style={{
                         position: 'absolute',
                         right:
@@ -14044,6 +14326,7 @@ function PostOffice({
                       </div>
 
                       <div
+                        className="conversation-label-grid"
                         style={{
                           display: 'flex',
                           flexWrap: 'wrap',
@@ -16611,41 +16894,7 @@ function Documents({
    COURSES
    ========================================================= */
 
-function CourseTypeBadge({
-  type
-}) {
 
-  const labels = {
-    open: 'OPEN',
-    free: 'FREE',
-    paid: 'PAID',
-    private: 'PRIVATE'
-  };
-
-
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        minHeight: 24,
-        padding: '4px 9px',
-        borderRadius: 999,
-        background:
-          type === 'paid'
-            ? 'rgba(99,102,241,0.12)'
-            : type === 'private'
-              ? 'rgba(15,23,42,0.08)'
-              : 'rgba(34,197,94,0.12)',
-        fontSize: 10,
-        fontWeight: 800,
-        letterSpacing: '.06em'
-      }}
-    >
-      {labels[type] || 'COURSE'}
-    </span>
-  );
-}
 
 
 function Courses({
@@ -22321,8 +22570,14 @@ function AI({
           </div>
         )}
 
-        <div style={{ display: 'flex', minHeight: 610 }}>
-          <aside style={{ width: 250, borderRight: '1px solid rgba(0,0,0,.08)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div
+          className="onstood-ai-workspace"
+          style={{ display: 'flex', minHeight: 610 }}
+        >
+          <aside
+            className="onstood-ai-history"
+            style={{ width: 250, borderRight: '1px solid rgba(0,0,0,.08)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Search size={15} /><input value={historySearch} onChange={e => setHistorySearch(e.target.value)} placeholder="Search history…" style={{ width: '100%' }} /></div>
             <small className="muted" style={{ fontWeight: 800 }}>HISTORY</small>
             <div style={{ overflowY: 'auto', maxHeight: 510 }}>
@@ -22336,8 +22591,12 @@ function AI({
             </div>
           </aside>
 
-          <section style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <section
+            className="onstood-ai-chat"
+            style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+          >
             <div
+              className="onstood-ai-messages"
               style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
             >
               {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
@@ -22351,12 +22610,22 @@ function AI({
               <div ref={chatEndRef} />
             </div>
 
-            <div style={{ borderTop: '1px solid rgba(0,0,0,.08)', padding: 14 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}>
+            <div
+              className="onstood-ai-composer-wrap"
+              style={{ borderTop: '1px solid rgba(0,0,0,.08)', padding: 14 }}
+            >
+              <div
+                className="onstood-ai-usage-row"
+                style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}
+              >
                 <small className="muted">Free {standardLeft}/{plan.standard_limit} · Advanced {advancedLeft}/{plan.advanced_limit} · refresh 12:00 PM</small>
                 <small className="muted">Enter = Ask AI</small>
               </div>
-              <form onSubmit={event => send(event, 'standard')} style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}>
+              <form
+                className="onstood-ai-composer"
+                onSubmit={event => send(event, 'standard')}
+                style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}
+              >
                 <input ref={inputRef} autoFocus value={text} onChange={e => setText(e.target.value)} placeholder="Ask ONSTOOD AI" disabled={busy} style={{ flex: 1, minHeight: 48, fontSize: 15 }} />
                 <button
                   className="onstood-standard-chip"
