@@ -10,6 +10,7 @@ import {
   Mail,
   Plus,
   Settings,
+  Shield,
   Sparkles,
   Users,
   X
@@ -291,6 +292,13 @@ export default function AppNavigation({
                   BriefcaseBusiness,
                   'Career'
                 ],
+                ...(activeNav.some(([id]) => id === 'admin')
+                  ? [[
+                      'admin',
+                      Shield,
+                      'Admin'
+                    ]]
+                  : []),
                 [
                   'settings',
                   Settings,

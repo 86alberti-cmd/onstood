@@ -20,7 +20,12 @@ export default function HomePage({
   overviewLoading,
   onOpenProfile,
   onAskAiMaterial,
-  aiAccess
+  aiAccess,
+  mobileTip = null,
+  mobileTipVisible = false,
+  onMobileTipToggle,
+  onMobileTipPrevious,
+  onMobileTipNext
 }) {
 
   const [posts, setPosts] = useState([]);
@@ -40,6 +45,11 @@ export default function HomePage({
   const [postFiles, setPostFiles] = useState([]);
   const [postAudience, setPostAudience] = useState('public');
   const [postKnowledgeConsent, setPostKnowledgeConsent] = useState(false);
+  const [rightsAccepted, setRightsAccepted] = useState(false);
+  const [rightsModalOpen, setRightsModalOpen] = useState(false);
+  const [rightsConfirmChecked, setRightsConfirmChecked] = useState(false);
+  const [rightsBusy, setRightsBusy] = useState(false);
+  const [pendingKnowledgeAction, setPendingKnowledgeAction] = useState(null);
   const [publishing, setPublishing] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
@@ -76,6 +86,90 @@ export default function HomePage({
       return {};
     }
   });
+
+
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    let active = true;
+
+    (async () => {
+      const { data } = await supabase
+        .from('onstood_upload_declarations')
+        .select('user_id,terms_version,accepted_at')
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (active) {
+        setRightsAccepted(Boolean(data?.user_id));
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.id]);
+
+
+  function requestKnowledgePermission(action) {
+    if (rightsAccepted) {
+      action?.();
+      return;
+    }
+
+    setPendingKnowledgeAction(() => action || null);
+    setRightsConfirmChecked(false);
+    setRightsModalOpen(true);
+  }
+
+
+  async function acceptContentRightsDeclaration() {
+    if (!rightsConfirmChecked || !profile?.id || rightsBusy) {
+      return;
+    }
+
+    setRightsBusy(true);
+
+    const declarationText =
+      'I confirm that I own this content or have the necessary rights or permission to upload and contribute it through ONSTOOD. I understand that I am responsible for the content I contribute.';
+
+    const { error } = await supabase
+      .from('onstood_upload_declarations')
+      .upsert(
+        {
+          user_id: profile.id,
+          terms_version: 'knowledge-rights-v1',
+          declaration_text: declarationText,
+          accepted_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id' }
+      );
+
+    setRightsBusy(false);
+
+    if (error) {
+      notify(
+        error.message ||
+        'Could not save the content rights declaration.'
+      );
+      return;
+    }
+
+    setRightsAccepted(true);
+    setRightsModalOpen(false);
+
+    const action = pendingKnowledgeAction;
+    setPendingKnowledgeAction(null);
+    action?.();
+  }
+
+
+  function closeRightsDeclaration() {
+    if (rightsBusy) return;
+    setRightsModalOpen(false);
+    setRightsConfirmChecked(false);
+    setPendingKnowledgeAction(null);
+  }
 
 
 
@@ -158,6 +252,7 @@ export default function HomePage({
         created_at,
         user_id,
         audience,
+        knowledge_consent,
         shared_from_post_id,
         post_media (
           id,
@@ -655,6 +750,72 @@ export default function HomePage({
     );
 
     notify('Post privacy updated.');
+  }
+
+
+  async function updatePostKnowledge(post, enabled) {
+    if (!post?.id) return;
+
+    const run = async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .update({ knowledge_consent: enabled })
+        .eq('id', post.id)
+        .eq('user_id', profile.id)
+        .select('id,knowledge_consent')
+        .single();
+
+      if (error) {
+        notify(error.message);
+        return;
+      }
+
+      setPosts(current =>
+        current.map(item =>
+          item.id === post.id
+            ? {
+                ...item,
+                knowledge_consent:
+                  Boolean(data.knowledge_consent)
+              }
+            : item
+        )
+      );
+
+      const {
+        data: knowledgeData,
+        error: knowledgeError
+      } = await supabase.functions.invoke(
+        'onstood-knowledge-post-ingest',
+        {
+          body: {
+            post_id: post.id,
+            action: enabled ? 'ingest' : 'revoke'
+          }
+        }
+      );
+
+      if (knowledgeError || knowledgeData?.error) {
+        notify(
+          knowledgeData?.error ||
+          knowledgeError?.message ||
+          'Could not update ONSTOOD Knowledge.'
+        );
+        return;
+      }
+
+      notify(
+        enabled
+          ? 'Post contributed to ONSTOOD Knowledge.'
+          : 'Post removed from ONSTOOD Knowledge.'
+      );
+    };
+
+    if (enabled) {
+      requestKnowledgePermission(run);
+    } else {
+      await run();
+    }
   }
 
 
@@ -1372,8 +1533,145 @@ export default function HomePage({
 
   return (
     <>
+      {rightsModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) {
+              closeRightsDeclaration();
+            }
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 70000,
+            background: 'rgba(15,23,42,.48)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: 'min(540px, 100%)',
+              padding: 22,
+              boxShadow: '0 24px 70px rgba(15,23,42,.28)'
+            }}
+          >
+            <small
+              className="muted"
+              style={{ fontWeight: 900 }}
+            >
+              ONSTOOD KNOWLEDGE · CONTENT RIGHTS
+            </small>
 
-      <section className="hero">
+            <h3 style={{ margin: '6px 0 8px' }}>
+              Confirm before contributing
+            </h3>
+
+            <p
+              className="muted"
+              style={{ lineHeight: 1.55 }}
+            >
+              ONSTOOD Knowledge can help other students from
+              contributed material. Only contribute content you own
+              or have permission or legal rights to share.
+            </p>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 9,
+                padding: '12px 13px',
+                borderRadius: 12,
+                border: '1px solid rgba(99,102,241,.18)',
+                background: rightsConfirmChecked
+                  ? 'rgba(99,102,241,.06)'
+                  : '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={rightsConfirmChecked}
+                onChange={event =>
+                  setRightsConfirmChecked(
+                    event.target.checked
+                  )
+                }
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <b>I confirm I have the necessary rights.</b>
+                <small
+                  className="muted"
+                  style={{
+                    display: 'block',
+                    marginTop: 3,
+                    lineHeight: 1.45
+                  }}
+                >
+                  I understand that I am responsible for material I
+                  upload or contribute and must not contribute content
+                  that I am not allowed to share.
+                </small>
+              </span>
+            </label>
+
+            <small
+              className="muted"
+              style={{
+                display: 'block',
+                marginTop: 11,
+                lineHeight: 1.45
+              }}
+            >
+              For answer generation, ONSTOOD may send only small,
+              relevant, privacy-filtered excerpts to its AI processing
+              provider. Original files are not sent as a knowledge
+              base and are not authorized for external AI
+              training/indexing.
+            </small>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 9,
+                marginTop: 18
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={closeRightsDeclaration}
+                disabled={rightsBusy}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                onClick={acceptContentRightsDeclaration}
+                disabled={
+                  rightsBusy ||
+                  !rightsConfirmChecked
+                }
+              >
+                {rightsBusy
+                  ? 'Saving…'
+                  : 'Confirm & continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className={`hero onstood-home-welcome ${mobileTipVisible ? 'mobile-tip-active' : ''}`}>
         <div>
           <span className="eyebrow">
             WELCOME TO ONSTOOD
@@ -1410,6 +1708,17 @@ export default function HomePage({
         </div>
       </section>
 
+      {mobileTip && (
+        <section className={`hero onstood-home-mobile-tip ${mobileTipVisible ? 'active' : ''}`}>
+          <button type="button" className="onstood-mobile-tip-arrow" onClick={onMobileTipPrevious} aria-label="Previous tip">‹</button>
+          <button type="button" className="onstood-mobile-tip-body" onClick={onMobileTipToggle}>
+            <span className="eyebrow">{mobileTip.eyebrow}</span>
+            <h3>{mobileTip.title}</h3>
+            <p>{mobileTip.text}</p>
+          </button>
+          <button type="button" className="onstood-mobile-tip-arrow" onClick={onMobileTipNext} aria-label="Next tip">›</button>
+        </section>
+      )}
 
       <div className="stat-row">
         <Stat
@@ -1787,11 +2096,19 @@ export default function HomePage({
                     <input
                       type="checkbox"
                       checked={postKnowledgeConsent}
-                      onChange={event =>
-                        setPostKnowledgeConsent(
-                          event.target.checked
-                        )
-                      }
+                      onChange={event => {
+                        const enabled =
+                          event.target.checked;
+
+                        if (!enabled) {
+                          setPostKnowledgeConsent(false);
+                          return;
+                        }
+
+                        requestKnowledgePermission(() =>
+                          setPostKnowledgeConsent(true)
+                        );
+                      }}
                     />
                     ONSTOOD Knowledge
                   </label>
@@ -2181,6 +2498,12 @@ export default function HomePage({
                   changePostAudience(
                     post.id,
                     audience
+                  )
+                }
+                onKnowledgeChange={enabled =>
+                  updatePostKnowledge(
+                    post,
+                    enabled
                   )
                 }
               />

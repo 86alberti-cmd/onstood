@@ -72,7 +72,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V32-KNOWLEDGE-REFINEMENT';
+const ONSTOOD_BUILD = 'V33-AI-KNOWLEDGE-GLOBAL';
 const ONSTOOD_SIDEBAR_TIPS = [
   {
     id: 'advanced-exam-revision',
@@ -376,6 +376,7 @@ function App({ session }) {
     useState(0);
   const [sidebarTipExpanded, setSidebarTipExpanded] =
     useState(false);
+  const [mobileHomeTipVisible, setMobileHomeTipVisible] = useState(false);
   const [sidebarTipPaused, setSidebarTipPaused] =
     useState(false);
 
@@ -390,6 +391,13 @@ function App({ session }) {
       return (current + direction + total) % total;
     });
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setMobileHomeTipVisible(current => !current);
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (sidebarTipPaused || sidebarTipExpanded) {
@@ -2354,6 +2362,12 @@ function App({ session }) {
 
         {/* MAIN */}
 
+        {adminRole && (
+          <button type="button" className="mobile-admin-fab" onClick={() => setSection('admin')} aria-label="Open Admin Control Center">
+            <ShieldCheck size={18}/><span>Admin</span>
+          </button>
+        )}
+
         <main className="content">
 
           <SectionErrorBoundary
@@ -2376,6 +2390,11 @@ function App({ session }) {
               aiAccess={
                 globalAiAccess
               }
+              mobileTip={sidebarTip}
+              mobileTipVisible={mobileHomeTipVisible}
+              onMobileTipToggle={() => setMobileHomeTipVisible(current => !current)}
+              onMobileTipPrevious={() => moveSidebarTip(-1)}
+              onMobileTipNext={() => moveSidebarTip(1)}
             />
           )}
 
@@ -3058,6 +3077,8 @@ function App({ session }) {
         }
 
 
+        .mobile-admin-fab { display: none; }
+
         .mobile-bottom-nav,
         .mobile-more-backdrop {
           display: none;
@@ -3287,6 +3308,33 @@ function App({ session }) {
           }
         }
 
+
+        .onstood-home-mobile-tip { display: none !important; }
+        @media (max-width: 767px) {
+          .onstood-home-welcome.mobile-tip-active { display: none !important; }
+          .onstood-home-mobile-tip.active { display: grid !important; grid-template-columns: 34px minmax(0,1fr) 34px; align-items: center; gap: 7px; min-height: 150px; }
+          .onstood-home-mobile-tip .onstood-mobile-tip-body h3 { margin: 4px 0 7px; font-size: 19px; line-height: 1.15; }
+          .onstood-home-mobile-tip .onstood-mobile-tip-body p { margin: 0; font-size: 12px; line-height: 1.38; }
+        }
+
+        .onstood-mobile-home-tip { display: none; }
+        .onstood-auth-powered-shell { min-height: 100dvh; position: relative; }
+        .onstood-auth-powered { position: fixed; left: 0; right: 0; bottom: 7px; z-index: 4; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: .55px; color: rgba(71,85,105,.55); pointer-events: none; }
+
+        @media (max-width: 767px) {
+          .onstood-mobile-home-tip {
+            display: grid; grid-template-columns: 32px minmax(0,1fr) 32px; align-items: center;
+            gap: 6px; width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 7px 8px;
+            border: 1px solid rgba(99,102,241,.16); border-radius: 15px;
+            background: linear-gradient(135deg, rgba(255,255,255,.99), rgba(245,243,255,.97));
+            box-shadow: 0 7px 20px rgba(79,70,229,.06);
+          }
+          .onstood-mobile-tip-arrow { border: 0; background: transparent; font-size: 24px; line-height: 1; opacity: .48; cursor: pointer; }
+          .onstood-mobile-tip-body { min-width: 0; border: 0; background: transparent; text-align: left; padding: 0; cursor: pointer; }
+          .onstood-mobile-tip-body small { display: block; font-size: 8px; font-weight: 900; letter-spacing: .75px; color: #6558ff; margin-bottom: 2px; }
+          .onstood-mobile-tip-body b { display: block; font-size: 12px; line-height: 1.18; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .onstood-mobile-tip-body span { display: block; margin-top: 4px; font-size: 10px; line-height: 1.28; color: #64748b; }
+        }
 
         /* Mobile browser foundation */
         @media (max-width: 767px) {
@@ -3535,6 +3583,24 @@ function App({ session }) {
 
           .desktop-sidebar {
             display: none !important;
+          }
+
+          .mobile-admin-fab {
+            display: flex !important;
+            position: fixed;
+            right: 14px;
+            bottom: calc(82px + env(safe-area-inset-bottom));
+            z-index: 23990;
+            align-items: center;
+            gap: 6px;
+            border: 1px solid rgba(79,70,229,.22);
+            border-radius: 999px;
+            padding: 9px 12px;
+            background: rgba(255,255,255,.97);
+            color: #4338ca;
+            box-shadow: 0 10px 30px rgba(15,23,42,.16);
+            font-size: 11px;
+            font-weight: 900;
           }
 
           .mobile-bottom-nav {
@@ -4229,6 +4295,26 @@ function AdminControlCenter({
   const [financePeriod, setFinancePeriod] = useState('month');
   const [finance, setFinance] = useState({ revenue: 0, costs: 0, profit: 0, ai_cost: 0, entries: 0, currency: 'USD' });
   const [planSettings, setPlanSettings] = useState([]);
+  const [observability, setObservability] = useState({
+    ai: {},
+    knowledge: {},
+    harvester: null
+  });
+
+  async function loadObservability() {
+    const now = new Date();
+    const from = new Date(now);
+    from.setHours(0,0,0,0);
+    const { data, error } = await supabase.rpc('admin_observability_snapshot', {
+      p_from: from.toISOString(),
+      p_to: now.toISOString()
+    });
+    if (error) {
+      console.warn('Admin observability:', error);
+      return;
+    }
+    if (data) setObservability(data);
+  }
 
   async function loadOwnerFinance(period = financePeriod) {
     if (role !== 'owner') return;
@@ -4266,6 +4352,8 @@ function AdminControlCenter({
   async function loadAll(
     quiet = false
   ) {
+
+    loadObservability();
 
     quiet
       ? setRefreshing(true)
@@ -4888,6 +4976,16 @@ function AdminControlCenter({
       'Dashboard',
       Activity
     ],
+    [
+      'ai-observability',
+      'AI & Cost',
+      Sparkles
+    ],
+    [
+      'knowledge-observability',
+      'Global Knowledge',
+      Database
+    ],
     ...(role === 'owner' ? [['finance', 'Owner Finance', Activity]] : []),
     [
       'users',
@@ -5130,6 +5228,72 @@ function AdminControlCenter({
 
         </>
 
+      )}
+
+
+      {tab === 'ai-observability' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <div><h3>AI economics · today</h3><small className="muted">No private chat text is stored here. Token and cost telemetry only.</small></div>
+              <Sparkles size={18}/>
+            </div>
+            <div className="stat-row">
+              <Stat label="Answered requests" value={Number(observability.ai?.requests || 0).toLocaleString()} />
+              <Stat label="AI cost today" value={`$${Number(observability.ai?.cost_usd || 0).toFixed(6)}`} />
+              <Stat label="Avg / answer" value={`$${Number(observability.ai?.avg_cost_usd || 0).toFixed(6)}`} />
+              <Stat label="Knowledge-assisted" value={`${Number(observability.ai?.knowledge_assisted || 0).toLocaleString()} / ${Number(observability.ai?.requests || 0).toLocaleString()}`} />
+            </div>
+          </div>
+          <div className="grid2">
+            <div className="card">
+              <div className="card-head"><h3>Token flow</h3><Activity size={18}/></div>
+              <div className="metric"><span>Provider input tokens</span><b>{Number(observability.ai?.input_tokens || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Cached input tokens</span><b>{Number(observability.ai?.cached_input_tokens || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>ONSTOOD Knowledge context · est.</span><b>{Number(observability.ai?.knowledge_context_tokens_est || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>AI output tokens</span><b>{Number(observability.ai?.output_tokens || 0).toLocaleString()}</b></div>
+            </div>
+            <div className="card">
+              <div className="card-head"><h3>Routing</h3><Database size={18}/></div>
+              <div className="metric"><span>Standard</span><b>{Number(observability.ai?.standard_requests || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Advanced</span><b>{Number(observability.ai?.advanced_requests || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Knowledge-assisted</span><b>{Number(observability.ai?.knowledge_assisted || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>AI-only</span><b>{Number(observability.ai?.ai_only || 0).toLocaleString()}</b></div>
+            </div>
+          </div>
+          <div className="notice" style={{marginTop:16}}>Knowledge tokens are an estimate derived from context length; provider input/output totals and cost are recorded from the AI response usage.</div>
+        </div>
+      )}
+
+      {tab === 'knowledge-observability' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <div><h3>ONSTOOD Global Knowledge</h3><small className="muted">Licensed indexed knowledge + reference-only academic discovery.</small></div>
+              <Database size={18}/>
+            </div>
+            <div className="stat-row">
+              <Stat label="Academic records" value={Number(observability.knowledge?.total || 0).toLocaleString()} />
+              <Stat label="Indexed" value={Number(observability.knowledge?.indexed || 0).toLocaleString()} />
+              <Stat label="Reference-only" value={Number(observability.knowledge?.reference_only || 0).toLocaleString()} />
+              <Stat label="Added today" value={`+${Number(observability.knowledge?.added_today || 0).toLocaleString()}`} />
+            </div>
+          </div>
+          <div className="grid2">
+            <div className="card">
+              <div className="card-head"><h3>Coverage</h3><Globe2 size={18}/></div>
+              <div className="metric"><span>Institutions represented</span><b>{Number(observability.knowledge?.institutions || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Last knowledge update</span><b>{observability.knowledge?.last_added ? new Date(observability.knowledge.last_added).toLocaleString() : '—'}</b></div>
+            </div>
+            <div className="card">
+              <div className="card-head"><h3>Academic harvester</h3><Activity size={18}/></div>
+              <div className="metric"><span>Status</span><b>{observability.harvester?.status || '—'}</b></div>
+              <div className="metric"><span>Last batch scanned</span><b>{Number(observability.harvester?.seen_count || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Accepted / catalogued</span><b>{Number(observability.harvester?.accepted_count || 0).toLocaleString()}</b></div>
+              <div className="metric"><span>Skipped</span><b>{Number(observability.harvester?.skipped_count || 0).toLocaleString()}</b></div>
+            </div>
+          </div>
+        </div>
       )}
 
 
@@ -6510,9 +6674,10 @@ function Root() {
   if (!session) {
 
     return (
-      <Auth
-        onReady={setSession}
-      />
+      <div className="onstood-auth-powered-shell">
+        <Auth onReady={setSession} />
+        <div className="onstood-auth-powered">Created by AN · Powered by AI</div>
+      </div>
     );
 
   }

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { History, Search, Send, Sparkles, X } from 'lucide-react';
+import { Globe2, History, Search, Send, Sparkles, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
 
@@ -72,6 +72,15 @@ export default function AI({
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+  const [answerLanguage, setAnswerLanguage] = useState('auto');
+
+  const AI_LANGUAGES = [
+    ['auto', 'Auto'], ['sq', 'Shqip'], ['en', 'English'], ['de', 'Deutsch'], ['fr', 'Français'],
+    ['it', 'Italiano'], ['es', 'Español'], ['pt', 'Português'], ['tr', 'Türkçe'], ['el', 'Ελληνικά'],
+    ['nl', 'Nederlands'], ['pl', 'Polski'], ['ro', 'Română'], ['hr', 'Hrvatski'], ['sr', 'Srpski'],
+    ['bs', 'Bosanski'], ['mk', 'Македонски'], ['ar', 'العربية'], ['he', 'עברית'], ['hi', 'हिन्दी'],
+    ['zh', '中文'], ['ja', '日本語'], ['ko', '한국어'], ['ru', 'Русский'], ['uk', 'Українська']
+  ];
 
   const standardLeft = Math.max(0, Number(plan.standard_limit || 0) - Number(usage.standard_count || 0));
   const advancedLeft = Math.max(0, Number(plan.advanced_limit || 0) - Number(usage.advanced_count || 0));
@@ -228,17 +237,40 @@ export default function AI({
   }
 
   async function loadSuggestions() {
-    const [docsResult, eventsResult, postsResult] = await Promise.all([
-      supabase.from('documents').select('id,file_name,created_at').order('created_at', { ascending: false }).limit(6),
+    const [docsResult, eventsResult, postsResult, academicResult] = await Promise.all([
+      supabase.from('documents').select('id,file_name,created_at').order('created_at', { ascending: false }).limit(10),
       supabase.from('calendar_events').select('id,title,starts_at,location').gte('starts_at', new Date().toISOString()).order('starts_at', { ascending: true }).limit(6),
-      supabase.from('posts').select('id,body,created_at').order('created_at', { ascending: false }).limit(6)
+      supabase.from('posts').select('id,body,created_at').order('created_at', { ascending: false }).limit(10),
+      supabase.from('academic_knowledge_items').select('id,title,abstract_text,institution,country,source_url,language,topics,published_at').eq('is_active', true).order('quality_score', { ascending: false }).limit(20)
     ]);
 
-    const items = [];
-    (eventsResult.data || []).forEach(item => items.push({ id: item.id, sourceType: 'calendar_event', kind: 'Upcoming', title: item.title, context: [item.title, item.location].filter(Boolean).join(' — '), meta: item.location || new Date(item.starts_at).toLocaleString() }));
-    (docsResult.data || []).forEach(item => items.push({ id: item.id, sourceType: 'document', kind: 'Document', title: item.file_name, context: item.file_name, meta: 'Available in ONSTOOD' }));
-    (postsResult.data || []).filter(item => item.body?.trim()).forEach(item => items.push({ id: item.id, sourceType: 'post', kind: 'From your network', title: item.body.trim().slice(0, 90), context: item.body.trim(), meta: 'Shared on ONSTOOD' }));
-    setSuggestions(items.slice(0, 12));
+    const studyProfile = [profile?.degree, profile?.faculty, profile?.university]
+      .filter(Boolean).join(' ').toLowerCase();
+    const tokens = studyProfile.split(/[^\p{L}\p{N}]+/u).filter(x => x.length >= 3);
+    const relevance = value => {
+      const hay = String(value || '').toLowerCase();
+      return tokens.reduce((score, token) => score + (hay.includes(token) ? 4 : 0), 0);
+    };
+
+    const local = [];
+    (eventsResult.data || []).forEach(item => local.push({ id: item.id, sourceType: 'calendar_event', kind: 'Upcoming', title: item.title, context: [item.title, item.location].filter(Boolean).join(' — '), meta: item.location || new Date(item.starts_at).toLocaleString(), score: relevance(`${item.title} ${item.location}`) }));
+    (docsResult.data || []).forEach(item => local.push({ id: item.id, sourceType: 'document', kind: 'Document', title: item.file_name, context: item.file_name, meta: 'Available in ONSTOOD', score: relevance(item.file_name) }));
+    (postsResult.data || []).filter(item => item.body?.trim()).forEach(item => local.push({ id: item.id, sourceType: 'post', kind: 'From your network', title: item.body.trim().slice(0, 90), context: item.body.trim(), meta: 'Shared on ONSTOOD', score: relevance(item.body) }));
+
+    const international = (academicResult.data || []).map(item => ({
+      id: item.id, sourceType: 'academic', kind: 'Global academic',
+      title: item.title, context: [item.title, item.abstract_text].filter(Boolean).join(' — '),
+      meta: [item.institution, item.country].filter(Boolean).join(' · ') || 'Verified academic source',
+      sourceUrl: item.source_url, originalLanguage: item.language,
+      score: relevance(`${item.title} ${item.abstract_text || ''} ${(item.topics || []).join?.(' ') || ''}`) + 2
+    })).sort((a,b) => b.score - a.score);
+
+    local.sort((a,b) => b.score - a.score);
+    // Target mix: roughly 60–70% ONSTOOD/local relevance and 30–40% international
+    // academic discovery, while always preferring the student's field when metadata permits.
+    const mixed = [...local.slice(0, 8), ...international.slice(0, 4)]
+      .sort((a,b) => b.score - a.score || Math.random() - .5);
+    setSuggestions(mixed.slice(0, 12));
   }
 
   useEffect(() => {
@@ -318,55 +350,180 @@ export default function AI({
     }
   }
 
-  function formatKnowledgeMatches(results) {
-    if (!Array.isArray(results) || !results.length) {
-      return '';
+  function knowledgeTypeLabel(value) {
+    if (value === 'original_hypothesis') {
+      return 'Student hypothesis · unverified';
     }
+    if (value === 'student_interpretation') {
+      return 'Student interpretation';
+    }
+    if (value === 'supported_academic') {
+      return 'Academic study material';
+    }
+    if (value === 'administrative_reference') {
+      return 'Reference material';
+    }
+    if (value === 'historical') {
+      return 'Historical material';
+    }
+    return 'Community knowledge';
+  }
+
+
+  function uniqueKnowledgeMatches(results) {
+    if (!Array.isArray(results)) return [];
 
     const unique = [];
     const seen = new Set();
 
     for (const item of results) {
-      const key = `${item?.source_type || ''}:${item?.source_id || ''}:${item?.excerpt || ''}`;
-      if (!item?.excerpt || seen.has(key)) continue;
+      const excerpt = String(item?.excerpt || '').trim();
+      if (!excerpt) continue;
+
+      const key =
+        `${item?.source_type || ''}:` +
+        `${item?.source_id || item?.document_id || ''}:` +
+        excerpt;
+
+      if (seen.has(key)) continue;
+
       seen.add(key);
       unique.push(item);
-      if (unique.length >= 3) break;
+
+      if (unique.length >= 4) break;
     }
 
+    return unique;
+  }
+
+
+  function buildKnowledgeContext(results) {
+    const unique = uniqueKnowledgeMatches(results);
+
+    return unique
+      .map((item, index) => {
+        const excerpt = String(item?.excerpt || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 900);
+
+        return [
+          `SOURCE ${index + 1}`,
+          `Title: ${item?.title || item?.file_name || 'Student contribution'}`,
+          `Type: ${knowledgeTypeLabel(item?.knowledge_type)}`,
+          `Quality: ${item?.quality_status || 'accepted'}`,
+          `Excerpt: ${excerpt}`
+        ].join('\n');
+      })
+      .join('\n\n')
+      .slice(0, 3600);
+  }
+
+
+  function formatKnowledgeSources(results) {
+    const unique = uniqueKnowledgeMatches(results);
+
     if (!unique.length) return '';
-
-    const typeLabel = value => {
-      if (value === 'original_hypothesis') return 'Student hypothesis · unverified';
-      if (value === 'student_interpretation') return 'Student interpretation';
-      if (value === 'supported_academic') return 'Academic study material';
-      if (value === 'administrative_reference') return 'Reference material';
-      if (value === 'historical') return 'Historical material';
-      return 'Community knowledge';
-    };
-
-    const compact = value => {
-      const clean = String(value || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const parts = clean
-        .split(/(?<=[.!?])\s+/)
-        .filter(Boolean);
-      return (parts.slice(0, 3).join(' ') || clean).slice(0, 520);
-    };
 
     return [
       '',
       '',
-      `ONSTOOD Knowledge · ${unique.length} relevant source${unique.length === 1 ? '' : 's'} found`,
-      'Private ONSTOOD retrieval · no Knowledge excerpt was sent to the external AI model.',
+      `ONSTOOD Knowledge · ${unique.length} relevant source${unique.length === 1 ? '' : 's'}`,
+      ...unique.map((item, index) => {
+        const title =
+          item?.title ||
+          item?.file_name ||
+          'Student contribution';
+
+        const status =
+          item?.quality_status === 'disputed'
+            ? ' · disputed'
+            : item?.quality_status === 'outdated'
+              ? ' · may be outdated'
+              : '';
+
+        return `${index + 1}. ${title} · ${knowledgeTypeLabel(item?.knowledge_type)}${status}`;
+      }),
       '',
-      ...unique.map((item, index) => [
-        `${index + 1}. ${item.title || 'Student contribution'}`,
-        `${typeLabel(item.knowledge_type)}${item.quality_status === 'disputed' ? ' · disputed' : item.quality_status === 'outdated' ? ' · may be outdated' : ''}`,
-        compact(item.excerpt)
-      ].join('\n'))
+      'ONSTOOD used only small, privacy-filtered excerpts for answer generation; original contributed files were not sent as an external knowledge base.'
     ].join('\n');
+  }
+
+
+  async function consumeQuestionQuota(questionMode) {
+    if (
+      questionMode === 'standard' &&
+      standardLeft <= 0
+    ) {
+      throw new Error(
+        'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.'
+      );
+    }
+
+    if (
+      questionMode === 'advanced' &&
+      !isPro
+    ) {
+      throw new Error(
+        'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.'
+      );
+    }
+
+    if (
+      questionMode === 'advanced' &&
+      advancedLeft <= 0
+    ) {
+      throw new Error(
+        'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.'
+      );
+    }
+
+    const {
+      data: quotaData,
+      error: quotaError
+    } = await supabase.rpc(
+      'consume_ai_question',
+      { p_mode: questionMode }
+    );
+
+    const quota =
+      Array.isArray(quotaData)
+        ? quotaData[0]
+        : quotaData;
+
+    if (quotaError || !quota?.allowed) {
+      throw new Error(
+        'Daily AI allowance reached. Refreshes at 12:00 PM.'
+      );
+    }
+
+    setUsage({
+      standard_count:
+        Number(quota.standard_used || 0),
+      advanced_count:
+        Number(quota.advanced_used || 0)
+    });
+
+    setPlan(current => ({
+      ...current,
+      plan_code:
+        quota.plan_code ||
+        current.plan_code,
+      standard_limit:
+        Number(
+          quota.standard_limit ??
+          current.standard_limit
+        ),
+      advanced_limit:
+        Number(
+          quota.advanced_limit ??
+          current.advanced_limit
+        )
+    }));
+
+    onUsageChanged?.();
+
+    return quota;
   }
 
 
@@ -377,7 +534,10 @@ export default function AI({
     privacyScope = 'user_prompt'
   ) {
     event?.preventDefault?.();
-    const question = String(forcedQuestion ?? text).trim();
+
+    const question =
+      String(forcedQuestion ?? text).trim();
+
     if (!question || busy) return;
 
     const questionMode =
@@ -390,11 +550,14 @@ export default function AI({
 
     setBusy(true);
     setText('');
+
     let activeId = null;
     let quotaConsumed = false;
+    let successfulAnswer = false;
 
     try {
-      activeId = await ensureConversation(question);
+      activeId =
+        await ensureConversation(question);
 
       const userMessage = {
         conversation_id: activeId,
@@ -410,139 +573,137 @@ export default function AI({
       } = await supabase
         .from('ai_messages')
         .insert(userMessage)
-        .select('id,role,mode,content,created_at')
+        .select(
+          'id,role,mode,content,created_at'
+        )
         .single();
 
-      if (saveUserError) throw saveUserError;
+      if (saveUserError) {
+        throw saveUserError;
+      }
 
       setMessages(current => [
         ...current,
         savedUser
       ]);
+
       scrollChat();
 
-      // ONSTOOD Knowledge is always checked FIRST.
-      // If an internal source answers the request, its text stays inside
-      // ONSTOOD and the external generative AI provider is not called.
+      // A successful ONSTOOD AI answer always consumes the selected
+      // Standard/Advanced allowance, regardless of whether the useful
+      // information comes from ONSTOOD Knowledge or the external model.
+      await consumeQuestionQuota(questionMode);
+      quotaConsumed = true;
+
+      // Knowledge is checked first. Search returns privacy-filtered,
+      // quality-gated excerpts rather than original contributed files.
       const knowledgeMatches =
         await searchOnstoodKnowledge(question);
 
-      const knowledgeAnswer =
-        formatKnowledgeMatches(knowledgeMatches);
+      const knowledgeContext =
+        buildKnowledgeContext(
+          knowledgeMatches
+        );
 
       let answer = '';
 
-      if (knowledgeAnswer) {
-        answer = [
-          'ONSTOOD Knowledge found relevant internal material for your question.',
-          knowledgeAnswer
-        ].join('');
-      } else if (privateOnstoodRequest) {
-        answer =
-          'This request contains ONSTOOD content, so it was kept inside ONSTOOD and was not sent to the external AI model. No matching ONSTOOD Knowledge material is indexed yet.';
-      } else {
-        // Only requests that cannot be answered from ONSTOOD Knowledge
-        // continue to the external AI path and consume the AI allowance.
-        if (
-          questionMode === 'standard' &&
-          standardLeft <= 0
-        ) {
-          throw new Error(
-            'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.'
-          );
-        }
-
-        if (
-          questionMode === 'advanced' &&
-          !isPro
-        ) {
-          throw new Error(
-            'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.'
-          );
-        }
-
-        if (
-          questionMode === 'advanced' &&
-          advancedLeft <= 0
-        ) {
-          throw new Error(
-            'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.'
-          );
-        }
-
-        const {
-          data: quotaData,
-          error: quotaError
-        } = await supabase.rpc(
-          'consume_ai_question',
-          { p_mode: questionMode }
-        );
-
-        const quota =
-          Array.isArray(quotaData)
-            ? quotaData[0]
-            : quotaData;
-
-        if (quotaError || !quota?.allowed) {
-          throw new Error(
-            'Daily AI allowance reached. Refreshes at 12:00 PM.'
-          );
-        }
-
-        quotaConsumed = true;
-
-        setUsage({
-          standard_count:
-            Number(quota.standard_used || 0),
-          advanced_count:
-            Number(quota.advanced_used || 0)
-        });
-
-        setPlan(current => ({
-          ...current,
-          plan_code:
-            quota.plan_code ||
-            current.plan_code,
-          standard_limit:
-            Number(
-              quota.standard_limit ??
-              current.standard_limit
-            ),
-          advanced_limit:
-            Number(
-              quota.advanced_limit ??
-              current.advanced_limit
-            )
-        }));
-
-        onUsageChanged?.();
-
+      if (knowledgeContext) {
+        // Refine the small privacy-filtered retrieval with ONSTOOD AI.
+        // The original document/post is never sent as the knowledge base.
         const { data, error } =
           await supabase.functions.invoke(
             'onstood-ai',
             {
               body: {
                 message: question,
-                mode: questionMode
+                mode: questionMode,
+                knowledge_context:
+                  knowledgeContext,
+                knowledge_source_count: uniqueKnowledgeMatches(knowledgeMatches).length,
+                answer_language: answerLanguage
+              }
+            }
+          );
+
+        if (!error && data?.answer) {
+          answer = [
+            data.answer,
+            formatKnowledgeSources(
+              knowledgeMatches
+            )
+          ].join('');
+        } else {
+          // If refinement is temporarily unavailable, ONSTOOD can still
+          // return the privacy-filtered Knowledge result. The student has
+          // received a useful answer, so the allowance remains consumed.
+          const fallback = uniqueKnowledgeMatches(
+            knowledgeMatches
+          );
+
+          answer = [
+            'ONSTOOD Knowledge found relevant material for your question.',
+            '',
+            ...fallback.map((item, index) => {
+              const clean = String(
+                item?.excerpt || ''
+              )
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 700);
+
+              return [
+                `${index + 1}. ${item?.title || item?.file_name || 'Student contribution'}`,
+                `${knowledgeTypeLabel(item?.knowledge_type)}`,
+                clean
+              ].join('\n');
+            }),
+            formatKnowledgeSources(
+              knowledgeMatches
+            )
+          ].join('\n');
+        }
+
+        successfulAnswer = Boolean(
+          String(answer || '').trim()
+        );
+      } else if (privateOnstoodRequest) {
+        // Selected private ONSTOOD content is not forwarded when it has
+        // no approved Knowledge match. No useful answer = no charge.
+        await refundQuestion(questionMode);
+        await loadUsage();
+        quotaConsumed = false;
+
+        answer =
+          "Sorry, we couldn't find reliable information for your request. Please try rephrasing your question.";
+
+        successfulAnswer = false;
+      } else {
+        const { data, error } =
+          await supabase.functions.invoke(
+            'onstood-ai',
+            {
+              body: {
+                message: question,
+                mode: questionMode,
+                answer_language: answerLanguage
               }
             }
           );
 
         if (error || !data?.answer) {
-          if (quotaConsumed) {
-            await refundQuestion(questionMode);
-            await loadUsage();
-            quotaConsumed = false;
-          }
+          await refundQuestion(questionMode);
+          await loadUsage();
+          quotaConsumed = false;
 
           throw new Error(
             data?.error ||
             error?.message ||
-            'ONSTOOD AI is temporarily unavailable. Your AI question was refunded.'
+            "Sorry, we couldn't find reliable information for your request. Your AI question was not charged."
           );
         }
 
         answer = data.answer;
+        successfulAnswer = true;
       }
 
       const {
@@ -557,10 +718,27 @@ export default function AI({
           mode: questionMode,
           content: answer
         })
-        .select('id,role,mode,content,created_at')
+        .select(
+          'id,role,mode,content,created_at'
+        )
         .single();
 
-      if (saveAiError) throw saveAiError;
+      if (saveAiError) {
+        // If the user never receives the successful answer because
+        // persistence fails, refund the quota.
+        if (
+          quotaConsumed &&
+          successfulAnswer
+        ) {
+          await refundQuestion(
+            questionMode
+          );
+          await loadUsage();
+          quotaConsumed = false;
+        }
+
+        throw saveAiError;
+      }
 
       setMessages(current => [
         ...current,
@@ -575,8 +753,21 @@ export default function AI({
         })
         .eq('id', activeId);
 
-      await loadConversations(activeId);
+      await loadConversations(
+        activeId
+      );
     } catch (error) {
+      if (
+        quotaConsumed &&
+        !successfulAnswer
+      ) {
+        await refundQuestion(
+          questionMode
+        );
+        await loadUsage();
+        quotaConsumed = false;
+      }
+
       setMessages(current => [
         ...current,
         {
@@ -585,7 +776,7 @@ export default function AI({
           mode: questionMode,
           content:
             error.message ||
-            'Something went wrong.'
+            "Sorry, we couldn't find reliable information for your request."
         }
       ]);
     } finally {
@@ -594,6 +785,7 @@ export default function AI({
       scrollChat();
     }
   }
+
 
   useEffect(() => {
     if (
@@ -631,7 +823,7 @@ export default function AI({
         ? 'advanced'
         : 'standard',
       question,
-      'onstood_content'
+      selectedSuggestion?.sourceType === 'academic' ? 'user_prompt' : 'onstood_content'
     );
 
     onExternalAskConsumed?.();
@@ -843,6 +1035,13 @@ export default function AI({
         .onstood-ai-selection-chip:disabled .onstood-ai-selection-flow{display:none}
         @keyframes onstoodSelectionLed{0%,100%{opacity:.52}50%{opacity:1}}
         @keyframes onstoodSelectionFlow{0%{transform:translateX(0);opacity:0}18%{opacity:.9}78%{opacity:.9}100%{transform:translateX(150px);opacity:0}}
+
+        @media(max-width:720px){
+          .onstood-ai-suggested-bar{min-height:48px!important;padding:6px 10px!important;gap:7px!important}
+          .onstood-ai-suggested-label{font-size:8px!important;letter-spacing:.55px!important;max-width:72px;line-height:1.05}
+          .onstood-ai-suggested-bar small{font-size:9px!important}
+          .onstood-ai-suggested-bar b{font-size:11px!important}
+        }
         @media(max-width:720px){
           .onstood-ai-selection-toolbar{max-width:calc(100vw - 16px);gap:4px;padding:5px}
           .onstood-ai-selection-chip{padding:0 7px;font-size:9px;letter-spacing:.2px}
@@ -878,8 +1077,8 @@ export default function AI({
       .onstood-mini-chat-shell img { max-width: 100% !important; }
 `}</style>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
+        <div className="onstood-ai-suggested-bar" style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div className="onstood-ai-suggested-label" style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeSuggestion ? (
               <button type="button" onClick={() => chooseSuggestion(activeSuggestion)} key={`${activeSuggestion.kind}-${activeSuggestion.id || suggestionIndex}`} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease', cursor: 'pointer', textAlign: 'left' }} title="Open this material with ONSTOOD AI">
@@ -990,6 +1189,18 @@ export default function AI({
               borderBottom: '1px solid rgba(0,0,0,.06)'
             }}
           >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Globe2 size={14} style={{ opacity: .55 }} />
+              <select
+                value={answerLanguage}
+                onChange={event => setAnswerLanguage(event.target.value)}
+                title="Answer language"
+                aria-label="ONSTOOD AI answer language"
+                style={{ border: 0, background: 'transparent', fontSize: 11, fontWeight: 800, maxWidth: 118, cursor: 'pointer' }}
+              >
+                {AI_LANGUAGES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+              </select>
+            </div>
             <button
               type="button"
               onClick={() =>

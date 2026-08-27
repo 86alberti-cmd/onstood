@@ -684,6 +684,11 @@ export function Documents({
   const [pendingFile, setPendingFile] = useState(null);
   const [uploadVisibility, setUploadVisibility] = useState('');
   const [uploadKnowledgeConsent, setUploadKnowledgeConsent] = useState(false);
+  const [rightsAccepted, setRightsAccepted] = useState(false);
+  const [rightsModalOpen, setRightsModalOpen] = useState(false);
+  const [rightsConfirmChecked, setRightsConfirmChecked] = useState(false);
+  const [rightsBusy, setRightsBusy] = useState(false);
+  const [pendingKnowledgeAction, setPendingKnowledgeAction] = useState(null);
   const fileInputRef = useRef(null);
 
 
@@ -773,6 +778,90 @@ export function Documents({
     };
 
   }, [profile.id]);
+
+
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    let active = true;
+
+    (async () => {
+      const { data } = await supabase
+        .from('onstood_upload_declarations')
+        .select('user_id,terms_version,accepted_at')
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (active) {
+        setRightsAccepted(Boolean(data?.user_id));
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [profile?.id]);
+
+
+  function requestKnowledgePermission(action) {
+    if (rightsAccepted) {
+      action?.();
+      return;
+    }
+
+    setPendingKnowledgeAction(() => action || null);
+    setRightsConfirmChecked(false);
+    setRightsModalOpen(true);
+  }
+
+
+  async function acceptContentRightsDeclaration() {
+    if (!rightsConfirmChecked || !profile?.id || rightsBusy) {
+      return;
+    }
+
+    setRightsBusy(true);
+
+    const declarationText =
+      'I confirm that I own this content or have the necessary rights or permission to upload and contribute it through ONSTOOD. I understand that I am responsible for the content I contribute.';
+
+    const { error } = await supabase
+      .from('onstood_upload_declarations')
+      .upsert(
+        {
+          user_id: profile.id,
+          terms_version: 'knowledge-rights-v1',
+          declaration_text: declarationText,
+          accepted_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id' }
+      );
+
+    setRightsBusy(false);
+
+    if (error) {
+      notify(
+        error.message ||
+        'Could not save the content rights declaration.'
+      );
+      return;
+    }
+
+    setRightsAccepted(true);
+    setRightsModalOpen(false);
+
+    const action = pendingKnowledgeAction;
+    setPendingKnowledgeAction(null);
+    action?.();
+  }
+
+
+  function closeRightsDeclaration() {
+    if (rightsBusy) return;
+    setRightsModalOpen(false);
+    setRightsConfirmChecked(false);
+    setPendingKnowledgeAction(null);
+  }
 
 
   function chooseDocument(event) {
@@ -1218,6 +1307,143 @@ export function Documents({
       }
     >
 
+      {rightsModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) {
+              closeRightsDeclaration();
+            }
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 70000,
+            background: 'rgba(15,23,42,.48)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              width: 'min(540px, 100%)',
+              padding: 22,
+              boxShadow: '0 24px 70px rgba(15,23,42,.28)'
+            }}
+          >
+            <small
+              className="muted"
+              style={{ fontWeight: 900 }}
+            >
+              ONSTOOD KNOWLEDGE · CONTENT RIGHTS
+            </small>
+
+            <h3 style={{ margin: '6px 0 8px' }}>
+              Confirm before contributing
+            </h3>
+
+            <p
+              className="muted"
+              style={{ lineHeight: 1.55 }}
+            >
+              Only contribute documents you own or have permission
+              or legal rights to share through ONSTOOD Knowledge.
+            </p>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 9,
+                padding: '12px 13px',
+                borderRadius: 12,
+                border: '1px solid rgba(99,102,241,.18)',
+                background: rightsConfirmChecked
+                  ? 'rgba(99,102,241,.06)'
+                  : '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={rightsConfirmChecked}
+                onChange={event =>
+                  setRightsConfirmChecked(
+                    event.target.checked
+                  )
+                }
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <b>I confirm I have the necessary rights.</b>
+                <small
+                  className="muted"
+                  style={{
+                    display: 'block',
+                    marginTop: 3,
+                    lineHeight: 1.45
+                  }}
+                >
+                  I understand that I am responsible for material I
+                  upload or contribute and must not contribute content
+                  that I am not allowed to share.
+                </small>
+              </span>
+            </label>
+
+            <small
+              className="muted"
+              style={{
+                display: 'block',
+                marginTop: 11,
+                lineHeight: 1.45
+              }}
+            >
+              For answer generation, ONSTOOD may send only small,
+              relevant, privacy-filtered excerpts to its AI processing
+              provider. Original files are not sent as a knowledge
+              base and are not authorized for external AI
+              training/indexing.
+            </small>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 9,
+                marginTop: 18
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={closeRightsDeclaration}
+                disabled={rightsBusy}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                onClick={acceptContentRightsDeclaration}
+                disabled={
+                  rightsBusy ||
+                  !rightsConfirmChecked
+                }
+              >
+                {rightsBusy
+                  ? 'Saving…'
+                  : 'Confirm & continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="card dropzone">
 
         <FileText size={28} />
@@ -1341,11 +1567,19 @@ export function Documents({
               <input
                 type="checkbox"
                 checked={uploadKnowledgeConsent}
-                onChange={event =>
-                  setUploadKnowledgeConsent(
-                    event.target.checked
-                  )
-                }
+                onChange={event => {
+                  const enabled =
+                    event.target.checked;
+
+                  if (!enabled) {
+                    setUploadKnowledgeConsent(false);
+                    return;
+                  }
+
+                  requestKnowledgePermission(() =>
+                    setUploadKnowledgeConsent(true)
+                  );
+                }}
                 style={{ marginTop: 2 }}
               />
               <span>
@@ -1521,12 +1755,25 @@ export function Documents({
                     checked={Boolean(
                       item.knowledge_consent ?? item.ai_opt_in
                     )}
-                    onChange={event =>
-                      updateDocumentKnowledge(
-                        item,
-                        event.target.checked
-                      )
-                    }
+                    onChange={event => {
+                      const enabled =
+                        event.target.checked;
+
+                      if (!enabled) {
+                        updateDocumentKnowledge(
+                          item,
+                          false
+                        );
+                        return;
+                      }
+
+                      requestKnowledgePermission(() =>
+                        updateDocumentKnowledge(
+                          item,
+                          true
+                        )
+                      );
+                    }}
                   />
                   ONSTOOD Knowledge
                 </label>

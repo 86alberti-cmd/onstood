@@ -26,7 +26,8 @@ export default function Post({
   onPostOffice,
   onDelete,
   onOpenProfile,
-  onAudienceChange
+  onAudienceChange,
+  onKnowledgeChange
 }) {
 
   const author =
@@ -120,6 +121,33 @@ export default function Post({
                 Only me
               </option>
             </select>
+
+            <label
+              title="Allow the study knowledge in this post to help other students through ONSTOOD Knowledge. This does not change post visibility."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '6px 7px',
+                borderRadius: 9,
+                border: '1px solid rgba(99,102,241,.16)',
+                fontSize: 10.5,
+                fontWeight: 800,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(post.knowledge_consent)}
+                onChange={event =>
+                  onKnowledgeChange?.(
+                    event.target.checked
+                  )
+                }
+              />
+              Knowledge
+            </label>
 
             <button
               type="button"
