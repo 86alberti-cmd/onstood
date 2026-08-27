@@ -39,9 +39,23 @@ export default function HomePage({
 
   const [postFiles, setPostFiles] = useState([]);
   const [postAudience, setPostAudience] = useState('public');
+  const [postKnowledgeConsent, setPostKnowledgeConsent] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+
+
+
+  function hideOnstoodTip() {
+    setTipVisible(false);
+
+    try {
+      localStorage.setItem(
+        `onstood_tip_hidden_${profile?.id || 'guest'}`,
+        new Date().toISOString().slice(0, 10)
+      );
+    } catch {}
+  }
 
   const [
     openAiSuggestedPostId,
@@ -449,7 +463,8 @@ export default function HomePage({
         .insert({
           user_id: profile.id,
           body,
-          audience: postAudience
+          audience: postAudience,
+          knowledge_consent: postKnowledgeConsent
         })
         .select(`
           id,
@@ -457,6 +472,7 @@ export default function HomePage({
           created_at,
           user_id,
           audience,
+          knowledge_consent,
           shared_from_post_id
         `)
         .single();
@@ -533,6 +549,28 @@ export default function HomePage({
         });
       }
 
+      if (postKnowledgeConsent && body) {
+        const {
+          data: knowledgeData,
+          error: knowledgeError
+        } = await supabase.functions.invoke(
+          'onstood-knowledge-post-ingest',
+          {
+            body: {
+              post_id: data.id,
+              action: 'ingest'
+            }
+          }
+        );
+
+        if (knowledgeError || knowledgeData?.error) {
+          console.warn(
+            'ONSTOOD Knowledge post indexing:',
+            knowledgeData?.error || knowledgeError
+          );
+        }
+      }
+
       setPosts(current => [
         {
           ...data,
@@ -543,6 +581,7 @@ export default function HomePage({
       ]);
 
       setText('');
+      setPostKnowledgeConsent(false);
       setPostFiles([]);
       setPostAudience('public');
       setComposerOpen(false);
@@ -1725,6 +1764,37 @@ export default function HomePage({
                       Only me
                     </option>
                   </select>
+
+                  <label
+                    title="Allow the study knowledge in this post to help other students inside ONSTOOD. This does not change who can see the original post."
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      minHeight: 40,
+                      padding: '0 9px',
+                      border: '1px solid rgba(99,102,241,.18)',
+                      borderRadius: 10,
+                      background: postKnowledgeConsent
+                        ? 'rgba(99,102,241,.07)'
+                        : '#fff',
+                      cursor: 'pointer',
+                      fontSize: 11.5,
+                      fontWeight: 800,
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={postKnowledgeConsent}
+                      onChange={event =>
+                        setPostKnowledgeConsent(
+                          event.target.checked
+                        )
+                      }
+                    />
+                    ONSTOOD Knowledge
+                  </label>
 
                   <button
                     className="btn primary"

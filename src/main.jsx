@@ -43,6 +43,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  ChevronLeft,
   ChevronRight,
   CircleUserRound,
   FileText,
@@ -71,7 +72,73 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const ONSTOOD_BUILD = 'V30-FINAL-MODULAR-REFRACTOR';
+const ONSTOOD_BUILD = 'V32-KNOWLEDGE-REFINEMENT';
+const ONSTOOD_SIDEBAR_TIPS = [
+  {
+    id: 'advanced-exam-revision',
+    eyebrow: 'DID YOU KNOW?',
+    title: 'Prepare a deeper exam revision.',
+    text:
+      'Advanced ONSTOOD AI is designed for deeper exam preparation with key topics, likely questions and a structured revision plan.',
+    actionLabel: 'Open ONSTOOD AI',
+    section: 'ai'
+  },
+  {
+    id: 'select-and-ask',
+    eyebrow: 'QUICK STUDY TRICK',
+    title: 'Select text. Ask ONSTOOD.',
+    text:
+      'Select text inside ONSTOOD and send it to the ONSTOOD study flow without copying and retyping it.',
+    actionLabel: 'Open ONSTOOD AI',
+    section: 'ai'
+  },
+  {
+    id: 'ai-history',
+    eyebrow: 'KEEP YOUR WORK',
+    title: 'Your AI history is one click away.',
+    text:
+      'ONSTOOD AI opens with a clean chat. Use History only when you want to reopen an earlier conversation.',
+    actionLabel: 'Open ONSTOOD AI',
+    section: 'ai'
+  },
+  {
+    id: 'calendar-tasks',
+    eyebrow: 'STAY ORGANIZED',
+    title: 'Plan the date, then the work.',
+    text:
+      'Keep exams and important dates in Calendar, then organize the preparation with Tasks.',
+    actionLabel: 'Open Calendar',
+    section: 'calendar'
+  },
+  {
+    id: 'documents',
+    eyebrow: 'YOUR STUDY LIBRARY',
+    title: 'Keep your study material together.',
+    text:
+      'Store documents in ONSTOOD and choose whether they stay private, are shared with connections, or are contributed to ONSTOOD Knowledge.',
+    actionLabel: 'Open Documents',
+    section: 'docs'
+  },
+  {
+    id: 'global-knowledge',
+    eyebrow: 'ONSTOOD KNOWLEDGE',
+    title: 'Your notes can help students worldwide.',
+    text:
+      'When you explicitly contribute supported study material to ONSTOOD Knowledge, its searchable knowledge can help students inside ONSTOOD while remaining unavailable to external AI knowledge bases.',
+    actionLabel: 'Open Documents',
+    section: 'docs'
+  },
+  {
+    id: 'multilingual-ai',
+    eyebrow: 'STUDY IN YOUR LANGUAGE',
+    title: 'ONSTOOD AI speaks 50+ languages.',
+    text:
+      'Ask questions and receive explanations in more than 50 languages. ONSTOOD AI follows the language you use so study support can feel natural wherever you are.',
+    actionLabel: 'Open ONSTOOD AI',
+    section: 'ai'
+  }
+];
+
 console.log('%cOopss, only for developers!', 'font-size:28px;font-weight:900;color:#6558ff;');
 console.log('%cThis area is intended for ONSTOOD developers. Never paste code here that someone sent you — it could compromise your ONSTOOD account.', 'font-size:13px;font-weight:600;color:#64748b;');
 console.info(`ONSTOOD ${ONSTOOD_BUILD} loaded`);
@@ -305,6 +372,39 @@ function App({ session }) {
   }
 
   const [profile, setProfile] = useState(null);
+  const [sidebarTipIndex, setSidebarTipIndex] =
+    useState(0);
+  const [sidebarTipExpanded, setSidebarTipExpanded] =
+    useState(false);
+  const [sidebarTipPaused, setSidebarTipPaused] =
+    useState(false);
+
+  const sidebarTip =
+    ONSTOOD_SIDEBAR_TIPS[sidebarTipIndex] ||
+    ONSTOOD_SIDEBAR_TIPS[0];
+
+  function moveSidebarTip(direction) {
+    setSidebarTipExpanded(false);
+    setSidebarTipIndex(current => {
+      const total = ONSTOOD_SIDEBAR_TIPS.length;
+      return (current + direction + total) % total;
+    });
+  }
+
+  useEffect(() => {
+    if (sidebarTipPaused || sidebarTipExpanded) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setSidebarTipIndex(current =>
+        (current + 1) % ONSTOOD_SIDEBAR_TIPS.length
+      );
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, [sidebarTipPaused, sidebarTipExpanded]);
+
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState('');
 
@@ -1759,215 +1859,209 @@ function App({ session }) {
 
 
   useEffect(() => {
+    let selectionTimer = null;
 
-    function captureGlobalSelection() {
-      window.setTimeout(() => {
+    function scheduleGlobalSelectionCapture(delay = 24) {
+      if (selectionTimer) {
+        window.clearTimeout(selectionTimer);
+      }
 
-        const selection =
-          window.getSelection?.();
-
-        const selectedText =
-          String(
-            selection?.toString() || ''
-          ).trim();
+      selectionTimer = window.setTimeout(() => {
+        const selection = window.getSelection?.();
+        const selectedText = String(
+          selection?.toString() || ''
+        ).trim();
 
         if (
           !selection ||
           selection.rangeCount === 0 ||
           !selectedText
         ) {
-          setGlobalSelectionAction(
-            null
-          );
+          setGlobalSelectionAction(null);
           return;
         }
 
-        const range =
-          selection.getRangeAt(0);
-
-        const commonNode =
-          range.commonAncestorContainer;
-
-        const commonElement =
-          commonNode?.nodeType === 1
-            ? commonNode
-            : commonNode?.parentElement;
+        const range = selection.getRangeAt(0);
+        const startNode = range.startContainer;
+        const endNode = range.endContainer;
+        const startElement =
+          startNode?.nodeType === 1
+            ? startNode
+            : startNode?.parentElement;
+        const endElement =
+          endNode?.nodeType === 1
+            ? endNode
+            : endNode?.parentElement;
 
         const appShell =
-          document.querySelector(
-            '.app-shell'
-          );
+          document.querySelector('.app-shell');
 
+        // Accept selections anywhere inside ONSTOOD, including
+        // another member's Network/Profile timeline.
         if (
           !appShell ||
-          !commonElement ||
-          !appShell.contains(
-            commonElement
-          )
+          !startElement ||
+          !endElement ||
+          !appShell.contains(startElement) ||
+          !appShell.contains(endElement)
         ) {
-          setGlobalSelectionAction(
-            null
-          );
+          setGlobalSelectionAction(null);
           return;
         }
 
         if (
-          commonElement.closest(
+          startElement.closest(
+            'input, textarea, [contenteditable="true"], .onstood-global-selection-toolbar'
+          ) ||
+          endElement.closest(
             'input, textarea, [contenteditable="true"], .onstood-global-selection-toolbar'
           )
         ) {
           return;
         }
 
-        const rect =
-          range.getBoundingClientRect();
+        const rect = range.getBoundingClientRect();
 
         if (
           !rect ||
-          (!rect.width &&
-            !rect.height)
+          (!rect.width && !rect.height)
         ) {
-          setGlobalSelectionAction(
-            null
-          );
+          setGlobalSelectionAction(null);
           return;
         }
 
-        const toolbarWidth =
+        const toolbarWidth = Math.min(
+          520,
+          window.innerWidth - 20
+        );
+
+        const safeLeft = Math.max(
+          10,
           Math.min(
-            520,
-            window.innerWidth - 20
-          );
+            window.innerWidth - toolbarWidth - 10,
+            rect.left +
+              rect.width / 2 -
+              toolbarWidth / 2
+          )
+        );
 
-        const safeLeft =
-          Math.max(
-            10,
-            Math.min(
-              window.innerWidth -
-                toolbarWidth -
-                10,
-              rect.left +
-                rect.width / 2 -
-                toolbarWidth / 2
-            )
-          );
-
-        const preferredTop =
-          rect.top - 56;
-
+        const preferredTop = rect.top - 56;
         const safeTop =
           preferredTop >= 10
             ? preferredTop
             : rect.bottom + 10;
 
         setGlobalSelectionAction({
-          text:
-            selectedText.slice(
-              0,
-              4000
-            ),
-          left:
-            safeLeft,
-          top:
-            safeTop
+          text: selectedText.slice(0, 4000),
+          left: safeLeft,
+          top: safeTop
         });
-      }, 0);
+      }, delay);
     }
 
-
-    function handleGlobalPointerDown(
-      event
-    ) {
+    function handleGlobalPointerDown(event) {
       if (
-        globalSelectionToolbarRef.current
-          ?.contains(
-            event.target
-          )
+        globalSelectionToolbarRef.current?.contains(
+          event.target
+        )
       ) {
         return;
       }
 
-      const selection =
-        window.getSelection?.();
-
+      // Do not clear an active selection at pointer-down time.
+      // The browser may still be starting a new drag selection,
+      // especially inside another user's profile timeline.
+      const selection = window.getSelection?.();
       if (
         !selection ||
-        !String(
-          selection.toString() || ''
-        ).trim()
+        !String(selection.toString() || '').trim()
       ) {
-        setGlobalSelectionAction(
-          null
-        );
+        setGlobalSelectionAction(null);
       }
     }
 
-
-    function handleGlobalKeyDown(
-      event
-    ) {
-      if (
-        event.key === 'Escape'
-      ) {
-        setGlobalSelectionAction(
-          null
-        );
+    function handleGlobalKeyDown(event) {
+      if (event.key === 'Escape') {
+        setGlobalSelectionAction(null);
         clearGlobalBrowserSelection();
       }
     }
 
+    function handleSelectionChange() {
+      scheduleGlobalSelectionCapture(45);
+    }
 
+    function handlePointerUp() {
+      scheduleGlobalSelectionCapture(0);
+    }
+
+    document.addEventListener(
+      'selectionchange',
+      handleSelectionChange
+    );
     document.addEventListener(
       'mouseup',
-      captureGlobalSelection
+      handlePointerUp
     );
-
+    document.addEventListener(
+      'pointerup',
+      handlePointerUp
+    );
+    document.addEventListener(
+      'touchend',
+      handlePointerUp
+    );
     document.addEventListener(
       'keyup',
-      captureGlobalSelection
+      handlePointerUp
     );
-
     document.addEventListener(
       'mousedown',
       handleGlobalPointerDown
     );
-
     window.addEventListener(
       'keydown',
       handleGlobalKeyDown
     );
-
     window.addEventListener(
       'scroll',
-      () =>
-        setGlobalSelectionAction(
-          null
-        ),
+      () => setGlobalSelectionAction(null),
       true
     );
 
     return () => {
+      if (selectionTimer) {
+        window.clearTimeout(selectionTimer);
+      }
+      document.removeEventListener(
+        'selectionchange',
+        handleSelectionChange
+      );
       document.removeEventListener(
         'mouseup',
-        captureGlobalSelection
+        handlePointerUp
       );
-
+      document.removeEventListener(
+        'pointerup',
+        handlePointerUp
+      );
+      document.removeEventListener(
+        'touchend',
+        handlePointerUp
+      );
       document.removeEventListener(
         'keyup',
-        captureGlobalSelection
+        handlePointerUp
       );
-
       document.removeEventListener(
         'mousedown',
         handleGlobalPointerDown
       );
-
       window.removeEventListener(
         'keydown',
         handleGlobalKeyDown
       );
     };
-
   }, []);
 
 
@@ -2452,40 +2546,300 @@ function App({ session }) {
         {profile.account_type !== 'employer' && (
         <aside className="rightbar">
 
-          <div className="card ai-card">
-
-            <div className="ai-badge">
-              <Sparkles size={16} />
-              ONSTOOD AI
-            </div>
-
-            <h3>
-              Your student assistant.
-            </h3>
-
-            <p>
-              Ask about your studies, organize your
-              week or work with your documents.
-            </p>
-
-            <button
-              className="btn primary full"
-              onClick={() => setSection('ai')}
+          {sidebarTip && (
+            <div
+              className="card onstood-tips-carousel"
+              onMouseEnter={() => setSidebarTipPaused(true)}
+              onMouseLeave={() => setSidebarTipPaused(false)}
+              style={{
+                position: 'relative',
+                overflow: 'hidden',
+                padding: 16,
+                minHeight: sidebarTipExpanded ? 238 : 210,
+                border:
+                  '1px solid rgba(99,102,241,.16)',
+                background:
+                  'linear-gradient(145deg, rgba(255,255,255,.99), rgba(245,243,255,.96))',
+                transition: 'min-height .22s ease, box-shadow .22s ease',
+                boxShadow:
+                  '0 10px 28px rgba(79,70,229,.07)'
+              }}
             >
-              Open AI assistant
-              <ChevronRight size={16} />
-            </button>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 9,
+                  marginBottom: 12
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 7
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 38,
+                      height: 38,
+                      display: 'grid',
+                      placeItems: 'center',
+                      borderRadius: 12,
+                      background:
+                        'linear-gradient(135deg, #5b55ff, #7c6cff)',
+                      color: '#fff',
+                      boxShadow:
+                        '0 8px 20px rgba(91,85,255,.22)'
+                    }}
+                  >
+                    <BookOpen size={19} />
+                  </span>
 
-          </div>
+                  <span
+                    style={{
+                      width: 30,
+                      height: 30,
+                      display: 'grid',
+                      placeItems: 'center',
+                      marginLeft: -13,
+                      marginTop: 15,
+                      borderRadius: 10,
+                      background: '#fff',
+                      border:
+                        '1px solid rgba(99,102,241,.18)',
+                      color: '#625bff',
+                      boxShadow:
+                        '0 5px 14px rgba(15,23,42,.08)'
+                    }}
+                  >
+                    <Sparkles size={14} />
+                  </span>
 
+                  <div style={{ marginLeft: 2 }}>
+                    <small
+                      style={{
+                        display: 'block',
+                        fontSize: 9.5,
+                        fontWeight: 900,
+                        letterSpacing: '1px',
+                        color: '#6558ff'
+                      }}
+                    >
+                      ONSTOOD
+                    </small>
+                    <b
+                      style={{
+                        display: 'block',
+                        fontSize: 13
+                      }}
+                    >
+                      Tips & Tricks
+                    </b>
+                  </div>
+                </div>
 
-          <div className="card tip">
-            <b>ONSTOOD idea</b>
-            <p>
-              Knowledge becomes more valuable
-              when students pass it to each other.
-            </p>
-          </div>
+                <small
+                  className="muted"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {sidebarTipIndex + 1}/{ONSTOOD_SIDEBAR_TIPS.length}
+                </small>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setSidebarTipExpanded(current => !current)
+                }
+                style={{
+                  width: '100%',
+                  padding: 0,
+                  border: 0,
+                  background: 'transparent',
+                  color: 'inherit',
+                  textAlign: 'left',
+                  cursor: 'pointer'
+                }}
+                title="Click for a quick explanation"
+              >
+                <small
+                  style={{
+                    display: 'block',
+                    marginBottom: 5,
+                    fontSize: 9.5,
+                    fontWeight: 900,
+                    letterSpacing: '.8px',
+                    opacity: .52
+                  }}
+                >
+                  {sidebarTip.eyebrow}
+                </small>
+
+                <h3
+                  style={{
+                    margin: '0 0 7px',
+                    fontSize: 17,
+                    lineHeight: 1.2
+                  }}
+                >
+                  {sidebarTip.title}
+                </h3>
+
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 12.5,
+                    lineHeight: 1.5,
+                    display: '-webkit-box',
+                    WebkitLineClamp: sidebarTipExpanded ? 'unset' : 3,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden'
+                  }}
+                >
+                  {sidebarTip.text}
+                </p>
+
+                <small
+                  style={{
+                    display: 'block',
+                    marginTop: 7,
+                    color: '#6558ff',
+                    fontWeight: 800,
+                    fontSize: 10.5
+                  }}
+                >
+                  {sidebarTipExpanded
+                    ? 'Quick explanation open'
+                    : 'Click to learn how it works'}
+                </small>
+              </button>
+
+              {sidebarTipExpanded && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSection(sidebarTip.section)
+                  }
+                  style={{
+                    marginTop: 10,
+                    padding: '7px 10px',
+                    border:
+                      '1px solid rgba(91,85,255,.18)',
+                    borderRadius: 999,
+                    background: 'rgba(91,85,255,.08)',
+                    color: '#554cff',
+                    cursor: 'pointer',
+                    fontSize: 11,
+                    fontWeight: 900
+                  }}
+                >
+                  {sidebarTip.actionLabel} →
+                </button>
+              )}
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginTop: 13,
+                  paddingTop: 10,
+                  borderTop:
+                    '1px solid rgba(99,102,241,.10)'
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => moveSidebarTip(-1)}
+                  aria-label="Previous ONSTOOD tip"
+                  title="Previous tip"
+                  style={{
+                    width: 29,
+                    height: 29,
+                    display: 'grid',
+                    placeItems: 'center',
+                    border:
+                      '1px solid rgba(99,102,241,.15)',
+                    borderRadius: 9,
+                    background: '#fff',
+                    color: '#6558ff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 5,
+                    alignItems: 'center'
+                  }}
+                >
+                  {ONSTOOD_SIDEBAR_TIPS.map((tip, index) => (
+                    <button
+                      key={tip.id}
+                      type="button"
+                      onClick={() => {
+                        setSidebarTipIndex(index);
+                        setSidebarTipExpanded(false);
+                      }}
+                      aria-label={`Open tip ${index + 1}`}
+                      style={{
+                        width: index === sidebarTipIndex ? 14 : 6,
+                        height: 6,
+                        padding: 0,
+                        border: 0,
+                        borderRadius: 999,
+                        background:
+                          index === sidebarTipIndex
+                            ? '#6558ff'
+                            : 'rgba(100,116,139,.25)',
+                        cursor: 'pointer',
+                        transition: 'width .2s ease'
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => moveSidebarTip(1)}
+                  aria-label="Next ONSTOOD tip"
+                  title="Next tip"
+                  style={{
+                    width: 29,
+                    height: 29,
+                    display: 'grid',
+                    placeItems: 'center',
+                    border:
+                      '1px solid rgba(99,102,241,.15)',
+                    borderRadius: 9,
+                    background: '#fff',
+                    color: '#6558ff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/*
+            Reserved right-sidebar monetization slot.
+            Later this can be:
+            A) a permanent ad below Tips & Tricks, or
+            B) one rotating slot: tip / ad / tip / ad.
+            No ad is rendered until we intentionally enable it.
+          */}
 
         </aside>
         )}

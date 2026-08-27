@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Check, FileText, Plus, Trash2, Upload, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { fmtDate } from '../../utils/formatters';
+import { fmtDate, safeDate, safeDay, safeMonth } from '../../utils/formatters';
 import { Page } from '../ui';
 
 export function Calendar({
@@ -683,6 +683,7 @@ export function Documents({
   const [busy, setBusy] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
   const [uploadVisibility, setUploadVisibility] = useState('');
+  const [uploadKnowledgeConsent, setUploadKnowledgeConsent] = useState(false);
   const fileInputRef = useRef(null);
 
 
@@ -800,6 +801,7 @@ export function Documents({
   function cancelPendingUpload() {
     setPendingFile(null);
     setUploadVisibility('');
+    setUploadKnowledgeConsent(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -861,7 +863,9 @@ export function Documents({
           mime_type:
             file.type ||
             'application/octet-stream',
-          visibility: uploadVisibility
+          visibility: uploadVisibility,
+          knowledge_consent: uploadKnowledgeConsent,
+          ai_opt_in: uploadKnowledgeConsent
         })
         .select()
         .single();
@@ -875,7 +879,37 @@ export function Documents({
         ...current
       ].filter(Boolean));
 
-      notify('Document uploaded.');
+      if (uploadKnowledgeConsent) {
+        const {
+          data: knowledgeData,
+          error: knowledgeError
+        } = await supabase.functions.invoke(
+          'onstood-knowledge-ingest',
+          {
+            body: {
+              document_id: data.id,
+              action: 'ingest'
+            }
+          }
+        );
+
+        if (knowledgeError || knowledgeData?.error) {
+          notify(
+            `Document uploaded. ONSTOOD Knowledge indexing: ${
+              knowledgeData?.error ||
+              knowledgeError?.message ||
+              'not available yet'
+            }`
+          );
+        } else {
+          notify(
+            'Document uploaded and added to ONSTOOD Knowledge.'
+          );
+        }
+      } else {
+        notify('Document uploaded.');
+      }
+
       cancelPendingUpload();
 
     } catch (error) {
@@ -976,64 +1010,94 @@ export function Documents({
     item,
     visibility
   ) {
-
     if (
       !item?.id ||
-      ![
-        'private',
-        'connections',
-        'onstood_ai'
-      ].includes(
-        visibility
-      )
+      !['private', 'connections', 'public'].includes(visibility)
     ) {
       return;
     }
 
-
-    const {
-      data,
-      error
-    } = await supabase
+    const { data, error } = await supabase
       .from('documents')
-      .update({
-        visibility
-      })
-      .eq(
-        'id',
-        item.id
-      )
-      .eq(
-        'user_id',
-        profile.id
-      )
+      .update({ visibility })
+      .eq('id', item.id)
+      .eq('user_id', profile.id)
       .select()
       .single();
-
 
     if (error) {
       notify(error.message);
       return;
     }
 
-
     setDocs(current =>
       current.map(document =>
-        document.id === item.id
-          ? data
-          : document
+        document.id === item.id ? data : document
       )
     );
 
-
     notify(
-      visibility === 'onstood_ai'
-        ? 'Document is now available to your connections and ONSTOOD AI.'
+      visibility === 'public'
+        ? 'Document is public.'
         : visibility === 'connections'
-          ? 'Document is now visible to connections.'
+          ? 'Document is visible to connections.'
           : 'Document is private.'
     );
+  }
 
+  async function updateDocumentKnowledge(
+    item,
+    enabled
+  ) {
+    if (!item?.id) return;
+
+    const { data, error } = await supabase
+      .from('documents')
+      .update({
+        knowledge_consent: enabled,
+        ai_opt_in: enabled
+      })
+      .eq('id', item.id)
+      .eq('user_id', profile.id)
+      .select()
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setDocs(current =>
+      current.map(document =>
+        document.id === item.id ? data : document
+      )
+    );
+
+    const { data: knowledgeData, error: knowledgeError } =
+      await supabase.functions.invoke(
+        'onstood-knowledge-ingest',
+        {
+          body: {
+            document_id: item.id,
+            action: enabled ? 'ingest' : 'revoke'
+          }
+        }
+      );
+
+    if (knowledgeError || knowledgeData?.error) {
+      notify(
+        knowledgeData?.error ||
+        knowledgeError?.message ||
+        'Could not update ONSTOOD Knowledge.'
+      );
+      return;
+    }
+
+    notify(
+      enabled
+        ? 'Document contributed to ONSTOOD Knowledge.'
+        : 'Document removed from ONSTOOD Knowledge.'
+    );
   }
 
 
@@ -1163,9 +1227,7 @@ export function Documents({
         </h3>
 
         <p>
-          Keep files private, share them with
-          connections, or make selected materials
-          available to your connections and ONSTOOD AI.
+          Choose who can open each file: Only me, Connections, or Public. ONSTOOD Knowledge is a separate permission, so even a private file can contribute useful study knowledge without changing its visibility.
         </p>
 
       </div>
@@ -1231,9 +1293,9 @@ export function Documents({
 
             <div style={{ display: 'grid', gap: 10, marginTop: 16 }}>
               {[
-                ['private', 'Private', 'Only you can access this document.'],
-                ['connections', 'Connections', 'Your accepted connections can access it.'],
-                ['onstood_ai', 'ONSTOOD AI', 'Your connections can access it, and ONSTOOD AI may use it as a knowledge source when relevant.']
+                ['private', 'Only me', 'Only you can open the original document.'],
+                ['connections', 'Connections', 'Your accepted connections can open the original document.'],
+                ['public', 'Public', 'Any signed-in ONSTOOD user can access the original document.']
               ].map(([value, title, description]) => (
                 <button
                   key={value}
@@ -1260,6 +1322,39 @@ export function Documents({
                 </button>
               ))}
             </div>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 9,
+                marginTop: 14,
+                padding: '12px 13px',
+                borderRadius: 12,
+                border: '1px solid rgba(99,102,241,.18)',
+                background: uploadKnowledgeConsent
+                  ? 'rgba(99,102,241,.07)'
+                  : '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={uploadKnowledgeConsent}
+                onChange={event =>
+                  setUploadKnowledgeConsent(
+                    event.target.checked
+                  )
+                }
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <b>Contribute to ONSTOOD Knowledge</b>
+                <small className="muted" style={{ display: 'block', marginTop: 3, lineHeight: 1.45 }}>
+                  This is separate from visibility. ONSTOOD may use the study knowledge to help other students inside ONSTOOD. Personal identifiers are filtered and the material is not authorized for external AI training/indexing.
+                </small>
+              </span>
+            </label>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
               <button
@@ -1380,8 +1475,9 @@ export function Documents({
                   <select
                     name={`document-visibility-${item.id}`}
                     value={
-                      item.visibility ||
-                      'private'
+                      item.visibility === 'onstood_ai'
+                        ? 'private'
+                        : item.visibility || 'private'
                     }
                     onChange={event =>
                       updateDocumentVisibility(
@@ -1402,10 +1498,37 @@ export function Documents({
                       Connections
                     </option>
 
-                    <option value="onstood_ai">
-                      ONSTOOD AI
+                    <option value="public">
+                      Public
                     </option>
                   </select>
+                </label>
+
+                <label
+                  title="This permission is independent from document visibility."
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 7,
+                    marginTop: 9,
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    cursor: 'pointer'
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(
+                      item.knowledge_consent ?? item.ai_opt_in
+                    )}
+                    onChange={event =>
+                      updateDocumentKnowledge(
+                        item,
+                        event.target.checked
+                      )
+                    }
+                  />
+                  ONSTOOD Knowledge
                 </label>
 
 

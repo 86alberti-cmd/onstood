@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, Send, Sparkles } from 'lucide-react';
+import { History, Search, Send, Sparkles, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
 
@@ -68,6 +68,7 @@ export default function AI({
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState({ standard_count: 0, advanced_count: 0 });
   const [historySearch, setHistorySearch] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
@@ -94,6 +95,89 @@ export default function AI({
     });
   }
 
+  function isExamRevisionIntent(value) {
+    const textValue = String(value || '').toLowerCase();
+
+    return /\b(exam|midterm|finals?|test|revision|study guide|study plan|prepare me|exam prep|review for|key points|important topics|provim|provimi|perserit|përsërit|permbledh|përmbledh)\b/i.test(
+      textValue
+    );
+  }
+
+  function isAdvancedValueIntent(value) {
+    const textValue = String(value || '').trim().toLowerCase();
+
+    if (!textValue) {
+      return false;
+    }
+
+    if (isExamRevisionIntent(textValue)) {
+      return true;
+    }
+
+    // Selected passages/documents and larger study requests benefit from
+    // deeper synthesis, so Standard may discreetly offer Advanced.
+    if (textValue.length >= 220) {
+      return true;
+    }
+
+    return /\b(selected text|document|notes?|material|lesson|chapter|course|summary|summarize|analyse|analyze|analysis|compare|explain in detail|detailed explanation|study material|tekst(?:in)? e zgjedhur|dokument|material(?:in)?|kapitull|leksion|kurs|përmbledh|permbledh|analiz|shpjego me hollësi|shpjego ne detaje|shpjego në detaje)\b/i.test(
+      textValue
+    );
+  }
+
+  function buildAdvancedExamPrompt(value) {
+    const originalRequest =
+      String(value || '').trim();
+
+    if (isExamRevisionIntent(originalRequest)) {
+      return [
+        'Create an Advanced ONSTOOD AI exam revision from this request.',
+        'Go deeper than a standard summary: organize the must-know topics, key concepts, likely exam questions, model answers, common mistakes and a practical revision plan.',
+        '',
+        `Original request: ${originalRequest}`
+      ].join('\n');
+    }
+
+    return [
+      'Analyze this request with Advanced ONSTOOD AI.',
+      'Give a deeper, more detailed explanation and organize the important ideas clearly. Add useful connections, examples and study guidance where relevant.',
+      '',
+      `Original request: ${originalRequest}`
+    ].join('\n');
+  }
+
+  function getExamUpgradeQuestion() {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+
+      if (
+        message?.role !== 'assistant' ||
+        message?.mode !== 'standard'
+      ) {
+        continue;
+      }
+
+      for (let userIndex = index - 1; userIndex >= 0; userIndex -= 1) {
+        const userMessage = messages[userIndex];
+
+        if (userMessage?.role !== 'user') {
+          continue;
+        }
+
+        if (
+          userMessage?.mode === 'standard' &&
+          isAdvancedValueIntent(userMessage?.content)
+        ) {
+          return userMessage.content;
+        }
+
+        return null;
+      }
+    }
+
+    return null;
+  }
+
   async function loadUsage() {
     const { data, error } = await supabase.rpc('get_ai_usage');
     if (!error) {
@@ -115,10 +199,16 @@ export default function AI({
       .order('updated_at', { ascending: false });
 
     if (error) return;
+
     const rows = data || [];
     setConversations(rows);
-    const nextId = preferredId || conversationId || rows[0]?.id || null;
-    if (nextId) setConversationId(nextId);
+
+    // History stays available, but opening ONSTOOD AI starts with a clean chat.
+    // A conversation is loaded only when the user explicitly selects it
+    // or when a new question creates a conversation.
+    if (preferredId) {
+      setConversationId(preferredId);
+    }
   }
 
   async function loadMessages(id) {
@@ -153,6 +243,13 @@ export default function AI({
 
   useEffect(() => {
     if (!profile?.id) return;
+
+    // Every fresh AI screen opens as a clean new chat.
+    setConversationId(null);
+    setMessages([]);
+    setHistoryOpen(false);
+    setHistorySearch('');
+
     loadUsage();
     loadConversations();
     loadSuggestions();
@@ -189,59 +286,308 @@ export default function AI({
     try { await supabase.rpc('refund_ai_question', { p_mode: questionMode }); } catch {}
   }
 
-  async function send(event, forcedMode = 'standard', forcedQuestion = null) {
+  async function searchOnstoodKnowledge(question) {
+    try {
+      const { data, error } =
+        await supabase.functions.invoke(
+          'onstood-knowledge-search',
+          {
+            body: {
+              query: String(question || '').slice(0, 1200)
+            }
+          }
+        );
+
+      if (error) {
+        console.warn(
+          'ONSTOOD Knowledge search:',
+          error
+        );
+        return [];
+      }
+
+      return Array.isArray(data?.results)
+        ? data.results
+        : [];
+    } catch (error) {
+      console.warn(
+        'ONSTOOD Knowledge search:',
+        error
+      );
+      return [];
+    }
+  }
+
+  function formatKnowledgeMatches(results) {
+    if (!Array.isArray(results) || !results.length) {
+      return '';
+    }
+
+    const unique = [];
+    const seen = new Set();
+
+    for (const item of results) {
+      const key = `${item?.source_type || ''}:${item?.source_id || ''}:${item?.excerpt || ''}`;
+      if (!item?.excerpt || seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+      if (unique.length >= 3) break;
+    }
+
+    if (!unique.length) return '';
+
+    const typeLabel = value => {
+      if (value === 'original_hypothesis') return 'Student hypothesis · unverified';
+      if (value === 'student_interpretation') return 'Student interpretation';
+      if (value === 'supported_academic') return 'Academic study material';
+      if (value === 'administrative_reference') return 'Reference material';
+      if (value === 'historical') return 'Historical material';
+      return 'Community knowledge';
+    };
+
+    const compact = value => {
+      const clean = String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const parts = clean
+        .split(/(?<=[.!?])\s+/)
+        .filter(Boolean);
+      return (parts.slice(0, 3).join(' ') || clean).slice(0, 520);
+    };
+
+    return [
+      '',
+      '',
+      `ONSTOOD Knowledge · ${unique.length} relevant source${unique.length === 1 ? '' : 's'} found`,
+      'Private ONSTOOD retrieval · no Knowledge excerpt was sent to the external AI model.',
+      '',
+      ...unique.map((item, index) => [
+        `${index + 1}. ${item.title || 'Student contribution'}`,
+        `${typeLabel(item.knowledge_type)}${item.quality_status === 'disputed' ? ' · disputed' : item.quality_status === 'outdated' ? ' · may be outdated' : ''}`,
+        compact(item.excerpt)
+      ].join('\n'))
+    ].join('\n');
+  }
+
+
+  async function send(
+    event,
+    forcedMode = 'standard',
+    forcedQuestion = null,
+    privacyScope = 'user_prompt'
+  ) {
     event?.preventDefault?.();
     const question = String(forcedQuestion ?? text).trim();
     if (!question || busy) return;
-    const questionMode = forcedMode === 'advanced' ? 'advanced' : 'standard';
 
-    if (questionMode === 'standard' && standardLeft <= 0) {
-      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'standard', content: 'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.' }]);
-      focusInput(); return;
-    }
-    if (questionMode === 'advanced' && !isPro) {
-      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.' }]);
-      focusInput(); return;
-    }
-    if (questionMode === 'advanced' && advancedLeft <= 0) {
-      setMessages(current => [...current, { id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.' }]);
-      focusInput(); return;
-    }
+    const questionMode =
+      forcedMode === 'advanced'
+        ? 'advanced'
+        : 'standard';
+
+    const privateOnstoodRequest =
+      privacyScope === 'onstood_content';
 
     setBusy(true);
     setText('');
     let activeId = null;
+    let quotaConsumed = false;
 
     try {
       activeId = await ensureConversation(question);
-      const { data: quotaData, error: quotaError } = await supabase.rpc('consume_ai_question', { p_mode: questionMode });
-      const quota = Array.isArray(quotaData) ? quotaData[0] : quotaData;
-      if (quotaError || !quota?.allowed) throw new Error('Daily AI allowance reached. Refreshes at 12:00 PM.');
 
-      setUsage({ standard_count: Number(quota.standard_used || 0), advanced_count: Number(quota.advanced_used || 0) });
-      setPlan(current => ({ ...current, plan_code: quota.plan_code || current.plan_code, standard_limit: Number(quota.standard_limit ?? current.standard_limit), advanced_limit: Number(quota.advanced_limit ?? current.advanced_limit) }));
-      onUsageChanged?.();
+      const userMessage = {
+        conversation_id: activeId,
+        user_id: profile.id,
+        role: 'user',
+        mode: questionMode,
+        content: question
+      };
 
-      const userMessage = { conversation_id: activeId, user_id: profile.id, role: 'user', mode: questionMode, content: question };
-      const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,created_at').single();
+      const {
+        data: savedUser,
+        error: saveUserError
+      } = await supabase
+        .from('ai_messages')
+        .insert(userMessage)
+        .select('id,role,mode,content,created_at')
+        .single();
+
       if (saveUserError) throw saveUserError;
-      setMessages(current => [...current, savedUser]);
+
+      setMessages(current => [
+        ...current,
+        savedUser
+      ]);
       scrollChat();
 
-      const { data, error } = await supabase.functions.invoke('onstood-ai', { body: { message: question, mode: questionMode } });
-      if (error || !data?.answer) {
-        await refundQuestion(questionMode);
-        await loadUsage();
-        throw new Error(data?.error || error?.message || 'ONSTOOD AI is temporarily unavailable. Your AI question was refunded.');
+      // ONSTOOD Knowledge is always checked FIRST.
+      // If an internal source answers the request, its text stays inside
+      // ONSTOOD and the external generative AI provider is not called.
+      const knowledgeMatches =
+        await searchOnstoodKnowledge(question);
+
+      const knowledgeAnswer =
+        formatKnowledgeMatches(knowledgeMatches);
+
+      let answer = '';
+
+      if (knowledgeAnswer) {
+        answer = [
+          'ONSTOOD Knowledge found relevant internal material for your question.',
+          knowledgeAnswer
+        ].join('');
+      } else if (privateOnstoodRequest) {
+        answer =
+          'This request contains ONSTOOD content, so it was kept inside ONSTOOD and was not sent to the external AI model. No matching ONSTOOD Knowledge material is indexed yet.';
+      } else {
+        // Only requests that cannot be answered from ONSTOOD Knowledge
+        // continue to the external AI path and consume the AI allowance.
+        if (
+          questionMode === 'standard' &&
+          standardLeft <= 0
+        ) {
+          throw new Error(
+            'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.'
+          );
+        }
+
+        if (
+          questionMode === 'advanced' &&
+          !isPro
+        ) {
+          throw new Error(
+            'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.'
+          );
+        }
+
+        if (
+          questionMode === 'advanced' &&
+          advancedLeft <= 0
+        ) {
+          throw new Error(
+            'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.'
+          );
+        }
+
+        const {
+          data: quotaData,
+          error: quotaError
+        } = await supabase.rpc(
+          'consume_ai_question',
+          { p_mode: questionMode }
+        );
+
+        const quota =
+          Array.isArray(quotaData)
+            ? quotaData[0]
+            : quotaData;
+
+        if (quotaError || !quota?.allowed) {
+          throw new Error(
+            'Daily AI allowance reached. Refreshes at 12:00 PM.'
+          );
+        }
+
+        quotaConsumed = true;
+
+        setUsage({
+          standard_count:
+            Number(quota.standard_used || 0),
+          advanced_count:
+            Number(quota.advanced_used || 0)
+        });
+
+        setPlan(current => ({
+          ...current,
+          plan_code:
+            quota.plan_code ||
+            current.plan_code,
+          standard_limit:
+            Number(
+              quota.standard_limit ??
+              current.standard_limit
+            ),
+          advanced_limit:
+            Number(
+              quota.advanced_limit ??
+              current.advanced_limit
+            )
+        }));
+
+        onUsageChanged?.();
+
+        const { data, error } =
+          await supabase.functions.invoke(
+            'onstood-ai',
+            {
+              body: {
+                message: question,
+                mode: questionMode
+              }
+            }
+          );
+
+        if (error || !data?.answer) {
+          if (quotaConsumed) {
+            await refundQuestion(questionMode);
+            await loadUsage();
+            quotaConsumed = false;
+          }
+
+          throw new Error(
+            data?.error ||
+            error?.message ||
+            'ONSTOOD AI is temporarily unavailable. Your AI question was refunded.'
+          );
+        }
+
+        answer = data.answer;
       }
 
-      const { data: savedAi, error: saveAiError } = await supabase.from('ai_messages').insert({ conversation_id: activeId, user_id: profile.id, role: 'assistant', mode: questionMode, content: data.answer }).select('id,role,mode,content,created_at').single();
+      const {
+        data: savedAi,
+        error: saveAiError
+      } = await supabase
+        .from('ai_messages')
+        .insert({
+          conversation_id: activeId,
+          user_id: profile.id,
+          role: 'assistant',
+          mode: questionMode,
+          content: answer
+        })
+        .select('id,role,mode,content,created_at')
+        .single();
+
       if (saveAiError) throw saveAiError;
-      setMessages(current => [...current, savedAi]);
-      await supabase.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', activeId);
+
+      setMessages(current => [
+        ...current,
+        savedAi
+      ]);
+
+      await supabase
+        .from('ai_conversations')
+        .update({
+          updated_at:
+            new Date().toISOString()
+        })
+        .eq('id', activeId);
+
       await loadConversations(activeId);
     } catch (error) {
-      setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', mode: questionMode, content: error.message || 'Something went wrong.' }]);
+      setMessages(current => [
+        ...current,
+        {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          mode: questionMode,
+          content:
+            error.message ||
+            'Something went wrong.'
+        }
+      ]);
     } finally {
       setBusy(false);
       focusInput();
@@ -284,7 +630,8 @@ export default function AI({
         'advanced'
         ? 'advanced'
         : 'standard',
-      question
+      question,
+      'onstood_content'
     );
 
     onExternalAskConsumed?.();
@@ -333,7 +680,8 @@ export default function AI({
       mode === 'advanced'
         ? 'advanced'
         : 'standard',
-      question
+      question,
+      'onstood_content'
     );
 
     setSelectedSuggestion(null);
@@ -625,28 +973,204 @@ export default function AI({
 
         <div
           className="onstood-ai-workspace"
-          style={{ display: 'flex', minHeight: 610 }}
+          style={{
+            position: 'relative',
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 610
+          }}
         >
-          <aside
-            className="onstood-ai-history"
-            style={{ width: 250, borderRight: '1px solid rgba(0,0,0,.08)', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}
+          <div
+            style={{
+              minHeight: 42,
+              padding: '7px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              borderBottom: '1px solid rgba(0,0,0,.06)'
+            }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Search size={15} /><input value={historySearch} onChange={e => setHistorySearch(e.target.value)} placeholder="Search history…" style={{ width: '100%' }} /></div>
-            <small className="muted" style={{ fontWeight: 800 }}>HISTORY</small>
-            <div style={{ overflowY: 'auto', maxHeight: 510 }}>
-              {filteredHistory.map(item => (
-                <button key={item.id} type="button" onClick={() => { setConversationId(item.id); focusInput(); }} style={{ width: '100%', border: 0, borderRadius: 10, padding: '10px 9px', marginBottom: 4, textAlign: 'left', cursor: 'pointer', background: conversationId === item.id ? 'rgba(99,102,241,.09)' : 'transparent' }}>
-                  <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{item.title || 'ONSTOOD AI'}</b>
-                  <small className="muted">{new Date(item.updated_at).toLocaleDateString()}</small>
-                </button>
-              ))}
-              {!filteredHistory.length && <small className="muted">Your AI history will stay here.</small>}
-            </div>
-          </aside>
+            <button
+              type="button"
+              onClick={() =>
+                setHistoryOpen(current => !current)
+              }
+              aria-expanded={historyOpen}
+              title="AI history"
+              style={{
+                border: 0,
+                background: 'transparent',
+                color: 'inherit',
+                opacity: historyOpen ? 1 : .48,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 8px',
+                borderRadius: 9,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '.35px'
+              }}
+            >
+              <History size={14} />
+              HISTORY
+            </button>
+          </div>
+
+          {historyOpen && (
+            <>
+              <button
+                type="button"
+                aria-label="Close AI history"
+                onClick={() =>
+                  setHistoryOpen(false)
+                }
+                style={{
+                  position: 'absolute',
+                  inset: '42px 0 0',
+                  zIndex: 30,
+                  border: 0,
+                  background: 'rgba(15,23,42,.16)',
+                  cursor: 'default'
+                }}
+              />
+
+              <aside
+                className="onstood-ai-history"
+                style={{
+                  position: 'absolute',
+                  top: 50,
+                  right: 10,
+                  zIndex: 31,
+                  width: 'min(310px, calc(100% - 20px))',
+                  maxHeight: 520,
+                  padding: 14,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  background: '#fff',
+                  border: '1px solid rgba(15,23,42,.10)',
+                  borderRadius: 14,
+                  boxShadow: '0 18px 50px rgba(15,23,42,.20)'
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8
+                  }}
+                >
+                  <small
+                    className="muted"
+                    style={{ fontWeight: 900 }}
+                  >
+                    AI HISTORY
+                  </small>
+
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() =>
+                      setHistoryOpen(false)
+                    }
+                    aria-label="Close history"
+                    title="Close"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      minWidth: 28,
+                      minHeight: 28
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8
+                  }}
+                >
+                  <Search size={15} />
+                  <input
+                    value={historySearch}
+                    onChange={event =>
+                      setHistorySearch(event.target.value)
+                    }
+                    placeholder="Search history…"
+                    style={{ width: '100%' }}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    overflowY: 'auto',
+                    maxHeight: 430
+                  }}
+                >
+                  {filteredHistory.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setConversationId(item.id);
+                        setHistoryOpen(false);
+                        focusInput();
+                      }}
+                      style={{
+                        width: '100%',
+                        border: 0,
+                        borderRadius: 10,
+                        padding: '10px 9px',
+                        marginBottom: 4,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        background:
+                          conversationId === item.id
+                            ? 'rgba(99,102,241,.09)'
+                            : 'transparent'
+                      }}
+                    >
+                      <b
+                        style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontSize: 13
+                        }}
+                      >
+                        {item.title || 'ONSTOOD AI'}
+                      </b>
+                      <small className="muted">
+                        {new Date(item.updated_at).toLocaleDateString()}
+                      </small>
+                    </button>
+                  ))}
+
+                  {!filteredHistory.length && (
+                    <small className="muted">
+                      Your AI history will stay here.
+                    </small>
+                  )}
+                </div>
+              </aside>
+            </>
+          )}
 
           <section
             className="onstood-ai-chat"
-            style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column'
+            }}
           >
             <div
               className="onstood-ai-messages"
@@ -659,6 +1183,86 @@ export default function AI({
                   {renderAiText(message.content)}
                 </div>
               ))}
+
+              {getExamUpgradeQuestion() && !busy && (
+                <div
+                  style={{
+                    margin: '10px 0 14px',
+                    padding: '13px 14px',
+                    borderRadius: 14,
+                    border: '1px solid rgba(99,102,241,.22)',
+                    background:
+                      'linear-gradient(135deg, rgba(99,102,241,.06), rgba(59,130,246,.035))'
+                  }}
+                >
+                  <small
+                    style={{
+                      display: 'block',
+                      marginBottom: 5,
+                      fontWeight: 900,
+                      letterSpacing: '.55px',
+                      opacity: .68
+                    }}
+                  >
+                    {isExamRevisionIntent(
+                      getExamUpgradeQuestion()
+                    )
+                      ? '✦ ADVANCED EXAM REVISION'
+                      : '✦ ADVANCED ONSTOOD AI'}
+                  </small>
+
+                  <b style={{ display: 'block' }}>
+                    {isExamRevisionIntent(
+                      getExamUpgradeQuestion()
+                    )
+                      ? 'Want a more detailed exam review?'
+                      : 'Need a deeper, more detailed analysis?'}
+                  </b>
+
+                  <small
+                    className="muted"
+                    style={{
+                      display: 'block',
+                      marginTop: 4,
+                      lineHeight: 1.45
+                    }}
+                  >
+                    {isExamRevisionIntent(
+                      getExamUpgradeQuestion()
+                    )
+                      ? 'Advanced ONSTOOD AI can go deeper with must-know topics, likely exam questions, model answers, common mistakes and a structured revision plan.'
+                      : 'For a deeper explanation, broader analysis and more detailed study support, ask with Advanced ONSTOOD AI.'}
+                  </small>
+
+                  <button
+                    type="button"
+                    className="btn subtle"
+                    onClick={event =>
+                      send(
+                        event,
+                        'advanced',
+                        buildAdvancedExamPrompt(
+                          getExamUpgradeQuestion()
+                        )
+                      )
+                    }
+                    disabled={
+                      busy ||
+                      (isPro && advancedLeft <= 0)
+                    }
+                    style={{
+                      marginTop: 10,
+                      fontSize: 12
+                    }}
+                  >
+                    <Sparkles size={14} />
+                    {isPro
+                      ? 'Use Advanced ONSTOOD AI'
+                      : 'Advanced ONSTOOD AI · PRO'}
+                  </button>
+                </div>
+              )}
+
               {busy && <div className="bubble"><Sparkles size={15} /> ONSTOOD AI is thinking…</div>}
               <div ref={chatEndRef} />
             </div>
