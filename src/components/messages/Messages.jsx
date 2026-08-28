@@ -1776,15 +1776,18 @@ export function PostOffice({
     useState(requestedConversationId || null);
 
   const [messages, setMessages] = useState([]);
+  const [visibleMessageCount, setVisibleMessageCount] =
+    useState(3);
   const messagesEndRef = useRef(null);
   const messageScrollRef = useRef(null);
   const keepChatPinnedToBottomRef = useRef(true);
+  const previousMessageCountRef = useRef(0);
   const messageInputRef = useRef(null);
   const conversationCardRef = useRef(null);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [chatViewportReady, setChatViewportReady] = useState(false);
+  const [chatViewportReady, setChatViewportReady] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -1855,6 +1858,9 @@ export function PostOffice({
     setConversationMenuOpen(false);
     setEmojiOpen(false);
     setGifOpen(false);
+    setVisibleMessageCount(3);
+    previousMessageCountRef.current =
+      0;
     keepChatPinnedToBottomRef.current =
       true;
   }, [selectedConversationId]);
@@ -1968,56 +1974,25 @@ export function PostOffice({
 
 
 
-  useLayoutEffect(() => {
 
-    if (
-      !selectedConversationId ||
-      loadingMessages
-    ) {
-      return;
-    }
-
-    const scroller =
-      messageScrollRef.current;
-
-    if (!scroller) {
-      return;
-    }
-
-    /*
-     * Initial position only. The viewport is hidden while we establish
-     * the bottom, so the user never sees the history move.
-     */
-    setChatViewportReady(false);
-
-    scroller.scrollTop =
-      scroller.scrollHeight;
-
-    const timer =
-      window.setTimeout(() => {
-        scroller.scrollTop =
-          scroller.scrollHeight;
-
-        setChatViewportReady(true);
-      }, 120);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-
-  }, [
-    selectedConversationId,
-    loadingMessages
-  ]);
 
 
   useEffect(() => {
+
+    const previousCount =
+      previousMessageCountRef.current;
+
+    previousMessageCountRef.current =
+      messages.length;
 
     if (
       !selectedConversationId ||
       loadingMessages ||
       !chatViewportReady ||
       messages.length === 0 ||
+      previousCount === 0 ||
+      messages.length <=
+        previousCount ||
       !keepChatPinnedToBottomRef.current
     ) {
       return;
@@ -2031,13 +2006,11 @@ export function PostOffice({
     }
 
     /*
-     * During a live conversation, if the user is already at the bottom,
-     * keep each new message visible. If the user scrolls up to read
-     * history, do not pull the viewport back down.
+     * Only a genuinely new live message may keep the viewport at the
+     * natural bottom. Initial conversation opening performs no scroll.
      */
     window.requestAnimationFrame(() => {
-      scroller.scrollTop =
-        scroller.scrollHeight;
+      scroller.scrollTop = 0;
     });
 
   }, [
@@ -3868,6 +3841,17 @@ export function PostOffice({
 
 
 
+  const visibleChatMessages =
+    messages.slice(
+      -visibleMessageCount
+    );
+
+  const hasOlderChatMessages =
+    messages.length >
+    visibleMessageCount;
+
+
+
   /* -------------------------------------------------------
      RENDER
      ------------------------------------------------------- */
@@ -4824,9 +4808,9 @@ export function PostOffice({
                     event.currentTarget;
 
                   const distanceFromBottom =
-                    element.scrollHeight -
-                    element.scrollTop -
-                    element.clientHeight;
+                    Math.abs(
+                      element.scrollTop
+                    );
 
                   keepChatPinnedToBottomRef.current =
                     distanceFromBottom <= 48;
@@ -4838,8 +4822,16 @@ export function PostOffice({
                     'auto',
                   overflowX:
                     'hidden',
+                  display:
+                    'flex',
+                  flexDirection:
+                    'column-reverse',
                   scrollBehavior:
                     'auto',
+                  overflowAnchor:
+                    'none',
+                  visibility:
+                    'visible',
                   padding:
                     compact
                       ? 10
@@ -4848,6 +4840,8 @@ export function PostOffice({
                     'rgba(0,0,0,0.015)'
                 }}
               >
+
+                <div ref={messagesEndRef} />
 
                 {loadingMessages ? (
 
@@ -4864,7 +4858,9 @@ export function PostOffice({
 
                 ) : (
 
-                  messages.map(
+                  [...visibleChatMessages]
+                    .reverse()
+                    .map(
                     message => {
 
                       const mine =
@@ -5149,6 +5145,45 @@ export function PostOffice({
                 )}
 
 
+                {hasOlderChatMessages && (
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVisibleMessageCount(
+                        current =>
+                          Math.min(
+                            messages.length,
+                            current + 20
+                          )
+                      );
+                    }}
+                    style={{
+                      alignSelf:
+                        'center',
+                      margin:
+                        '8px auto 10px',
+                      padding:
+                        '7px 12px',
+                      border:
+                        '1px solid rgba(15,23,42,0.12)',
+                      borderRadius:
+                        999,
+                      background:
+                        '#fff',
+                      cursor:
+                        'pointer',
+                      fontSize:
+                        12,
+                      fontWeight:
+                        800
+                    }}
+                  >
+                    Load history
+                  </button>
+
+                )}
+
                 {messages.length > 0 &&
                 messages[
                   messages.length - 1
@@ -5174,8 +5209,6 @@ export function PostOffice({
                   </div>
 
                 )}
-
-                <div ref={messagesEndRef} />
 
               </div>
 
