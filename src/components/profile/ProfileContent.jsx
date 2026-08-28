@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import {
   FileText,
   MessageCircle

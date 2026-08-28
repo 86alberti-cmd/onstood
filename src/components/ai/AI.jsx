@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { OnstoodRichText } from '../OnstoodRichText';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { Globe2, History, Search, Send, Sparkles, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
@@ -885,7 +887,7 @@ export default function AI({
   const activeSuggestion = suggestions.length ? suggestions[suggestionIndex % suggestions.length] : null;
 
   return (
-    <Page eyebrow="INTELLIGENCE LAYER" title="ONSTOOD AI">
+    <Page eyebrow="INTELLIGENCE LAYER" title={<><OnstoodWordmark /> AI</>}>
       <style>{`
         .onstood-advanced-chip{
           width:190px; min-width:190px; min-height:48px; padding:0 14px;
@@ -1078,14 +1080,14 @@ export default function AI({
 `}</style>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="onstood-ai-suggested-bar" style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div className="onstood-ai-suggested-label" style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
+          <div className="onstood-ai-suggested-label" style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY <OnstoodWordmark /> AI</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeSuggestion ? (
               <button type="button" onClick={() => chooseSuggestion(activeSuggestion)} key={`${activeSuggestion.kind}-${activeSuggestion.id || suggestionIndex}`} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease', cursor: 'pointer', textAlign: 'left' }} title="Open this material with ONSTOOD AI">
                 <span style={{ padding: '5px 9px', borderRadius: 999, background: 'rgba(99,102,241,.09)', fontSize: 11, fontWeight: 800 }}>{activeSuggestion.kind}</span>
                 <div style={{ minWidth: 0 }}><b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSuggestion.title}</b><small className="muted">{activeSuggestion.meta}</small></div>
               </button>
-            ) : <small className="muted">Suggestions will appear here from ONSTOOD content available to you.</small>}
+            ) : <small className="muted">Suggestions will appear here from <OnstoodWordmark /> content available to you.</small>}
           </div>
           {suggestions.length > 1 && <small className="muted">{suggestionIndex + 1}/{suggestions.length}</small>}
         </div>
@@ -1093,7 +1095,7 @@ export default function AI({
         {selectedSuggestion && (
           <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(99,102,241,.035)' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <small className="muted" style={{ display: 'block', fontWeight: 800 }}>SELECTED ONSTOOD MATERIAL</small>
+              <small className="muted" style={{ display: 'block', fontWeight: 800 }}>SELECTED <OnstoodWordmark /> MATERIAL</small>
               <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedSuggestion.title}</b>
             </div>
             <div
@@ -1123,7 +1125,7 @@ export default function AI({
                 <span className="onstood-global-selection-flow" />
                 <span className="onstood-global-selection-led" />
                 <span className="onstood-global-selection-label">
-                  ASK ONSTOOD AI
+                  ASK <OnstoodWordmark /> AI
                 </span>
               </button>
 
@@ -1150,7 +1152,7 @@ export default function AI({
                 <span className="onstood-global-selection-flow" />
                 <span className="onstood-global-selection-led" />
                 <span className="onstood-global-selection-label">
-                  ASK ADVANCED ONSTOOD AI
+                  ASK ADVANCED <OnstoodWordmark /> AI
                 </span>
               </button>
             </div>
@@ -1384,10 +1386,22 @@ export default function AI({
             }}
           >
             <div
-              className="onstood-ai-messages"
-              style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
+              className="onstood-ai-messages onstood-ai-copy-protected"
+              onCopy={event => event.preventDefault()}
+              onCut={event => event.preventDefault()}
+              onContextMenu={event => event.preventDefault()}
+              onDragStart={event => event.preventDefault()}
+              style={{
+                flex: 1,
+                padding: 18,
+                overflowY: 'auto',
+                maxHeight: 520,
+                userSelect: 'text',
+                WebkitUserSelect: 'text',
+                WebkitTouchCallout: 'none'
+              }}
             >
-              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
+              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask <OnstoodWordmark /> AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
               {messages.map(message => (
                 <div key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
                   {message.role === 'assistant' && message.mode === 'advanced' && <small style={{ display: 'block', marginBottom: 5, fontWeight: 900 }}>✦ ADVANCED AI</small>}
@@ -1474,7 +1488,7 @@ export default function AI({
                 </div>
               )}
 
-              {busy && <div className="bubble"><Sparkles size={15} /> ONSTOOD AI is thinking…</div>}
+              {busy && <div className="bubble"><Sparkles size={15} /> <OnstoodWordmark /> AI is thinking…</div>}
               <div ref={chatEndRef} />
             </div>
 
@@ -1494,7 +1508,45 @@ export default function AI({
                 onSubmit={event => send(event, 'standard')}
                 style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}
               >
-                <input ref={inputRef} autoFocus value={text} onChange={e => setText(e.target.value)} placeholder="Ask ONSTOOD AI" disabled={busy} style={{ flex: 1, minHeight: 48, fontSize: 15 }} />
+                <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                  {!text && (
+                    <div
+                      aria-hidden="true"
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        paddingLeft: 14,
+                        paddingRight: 14,
+                        pointerEvents: 'none',
+                        fontSize: 15,
+                        color: 'var(--muted)',
+                        zIndex: 2
+                      }}
+                    >
+                      Ask&nbsp;<OnstoodWordmark />&nbsp;AI
+                    </div>
+                  )}
+                  <input
+                    ref={inputRef}
+                    autoFocus
+                    value={text}
+                    onChange={e => setText(e.target.value)}
+                    placeholder=""
+                    aria-label="Ask OnStood AI"
+                    disabled={busy}
+                    style={{
+                      width: '100%',
+                      minHeight: 48,
+                      fontSize: 15,
+                      boxSizing: 'border-box',
+                      position: 'relative',
+                      zIndex: 1,
+                      background: 'transparent'
+                    }}
+                  />
+                </div>
                 <button
                   className="onstood-standard-chip"
                   disabled={busy || !text.trim()}
@@ -1535,6 +1587,22 @@ export default function AI({
           </section>
         </div>
       </div>
+
+      <style>{`
+        .onstood-ai-copy-protected,
+        .onstood-ai-copy-protected * {
+          -webkit-user-select: text !important;
+          user-select: text !important;
+          -webkit-touch-callout: none !important;
+        }
+
+        .onstood-ai-copy-protected img,
+        .onstood-ai-copy-protected video,
+        .onstood-ai-copy-protected a {
+          -webkit-user-drag: none !important;
+          user-drag: none !important;
+        }
+      `}</style>
 
     </Page>
   );

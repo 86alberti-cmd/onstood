@@ -1,9 +1,289 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect,
+  useLayoutEffect, useRef, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { Mail, Paperclip, Search, Send, Trash2, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtDate } from '../../utils/formatters';
 import Avatar from '../Avatar';
 import { Page } from '../ui';
+
+
+
+function prettyFileSize(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentKind(mimeType = '', fileName = '') {
+  const mime = String(mimeType || '').toLowerCase();
+  const name = String(fileName || '').toLowerCase();
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name)) return 'image';
+  if (mime === 'application/pdf' || /\.pdf$/i.test(name)) return 'pdf';
+  return 'document';
+}
+
+function SecureAttachmentPreview({
+  bucket,
+  storagePath,
+  fileName,
+  mimeType,
+  size,
+  notify,
+  compact = false
+}) {
+  const [signedUrl, setSignedUrl] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    if (!bucket || !storagePath) {
+      setPreviewLoading(false);
+      return undefined;
+    }
+
+    setPreviewLoading(true);
+
+    (async () => {
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .createSignedUrl(storagePath, 900);
+
+      if (!active) return;
+
+      if (error) {
+        console.error('Attachment preview error:', error);
+        setPreviewLoading(false);
+        return;
+      }
+
+      setSignedUrl(data?.signedUrl || '');
+      setPreviewLoading(false);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [bucket, storagePath]);
+
+  const kind = attachmentKind(mimeType, fileName);
+
+  const openFile = () => {
+    if (!signedUrl) {
+      notify?.('The document preview is still loading.');
+      return;
+    }
+    window.open(signedUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  if (previewLoading) {
+    return (
+      <div className="onstood-document-preview-card" style={{ marginTop: 8, padding: 12 }}>
+        <small className="muted">Loading document preview…</small>
+      </div>
+    );
+  }
+
+  if (kind === 'image' && signedUrl) {
+    return (
+      <div className="onstood-document-preview-card" style={{ marginTop: 8, overflow: 'hidden' }}>
+        <button
+          type="button"
+          onClick={openFile}
+          style={{
+            display: 'block',
+            width: '100%',
+            padding: 0,
+            border: 0,
+            background: '#f8fafc',
+            cursor: 'zoom-in'
+          }}
+          title="Open full attachment"
+        >
+          <img
+            src={signedUrl}
+            alt={fileName || 'Attachment'}
+            loading="lazy"
+            style={{
+              display: 'block',
+              width: '100%',
+              maxHeight: compact ? 260 : 380,
+              objectFit: 'contain',
+              background: '#f8fafc'
+            }}
+          />
+        </button>
+
+        <div className="onstood-document-preview-footer">
+          <span
+            style={{
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              fontWeight: 700
+            }}
+          >
+            {fileName || 'Image'}
+          </span>
+          <button type="button" className="btn subtle" onClick={openFile}>
+            Open
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'pdf' && signedUrl) {
+    return (
+      <div className="onstood-document-preview-card" style={{ marginTop: 8, overflow: 'hidden' }}>
+        <div className="onstood-pdf-preview-shell">
+          <iframe
+            src={`${signedUrl}#toolbar=0&navpanes=0&view=FitH`}
+            title={fileName || 'PDF preview'}
+            loading="lazy"
+            style={{
+              display: 'block',
+              width: '100%',
+              height: compact ? 250 : 340,
+              border: 0,
+              background: '#f8fafc'
+            }}
+          />
+        </div>
+
+        <div className="onstood-document-preview-footer">
+          <div style={{ minWidth: 0 }}>
+            <strong
+              style={{
+                display: 'block',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {fileName || 'PDF document'}
+            </strong>
+            <small className="muted">
+              PDF{size ? ` · ${prettyFileSize(size)}` : ''}
+            </small>
+          </div>
+          <button type="button" className="btn subtle" onClick={openFile}>
+            Open
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="onstood-document-preview-card" style={{ marginTop: 8, padding: 13 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '46px minmax(0,1fr) auto',
+          gap: 11,
+          alignItems: 'center'
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            width: 46,
+            height: 56,
+            borderRadius: 10,
+            background: 'linear-gradient(180deg,#eff6ff,#e0e7ff)',
+            border: '1px solid rgba(37,99,235,.14)',
+            display: 'grid',
+            placeItems: 'center',
+            fontWeight: 900,
+            color: '#1d4ed8',
+            fontSize: 12
+          }}
+        >
+          DOC
+        </div>
+
+        <div style={{ minWidth: 0 }}>
+          <strong
+            style={{
+              display: 'block',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+            title={fileName || ''}
+          >
+            {fileName || 'Attached document'}
+          </strong>
+          <small className="muted" style={{ display: 'block', marginTop: 3 }}>
+            {mimeType
+              ? String(mimeType).split('/').pop()?.toUpperCase()
+              : 'DOCUMENT'}
+            {size ? ` · ${prettyFileSize(size)}` : ''}
+          </small>
+          <small className="muted" style={{ display: 'block', marginTop: 3 }}>
+            Tap Open to view the full document.
+          </small>
+        </div>
+
+        <button
+          type="button"
+          className="btn subtle"
+          onClick={openFile}
+          disabled={!signedUrl}
+        >
+          Open
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function createBrowserSafeId() {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.getRandomValues === 'function'
+    ) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+      const hex = Array.from(
+        bytes,
+        byte => byte.toString(16).padStart(2, '0')
+      );
+
+      return [
+        hex.slice(0, 4).join(''),
+        hex.slice(4, 6).join(''),
+        hex.slice(6, 8).join(''),
+        hex.slice(8, 10).join(''),
+        hex.slice(10, 16).join('')
+      ].join('-');
+    }
+  } catch {
+    // Fall through to a non-cryptographic compatibility id.
+  }
+
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
+}
+
 
 function DirectPostsPanel({
   profile,
@@ -19,12 +299,24 @@ function DirectPostsPanel({
   const [loading, setLoading] =
     useState(true);
 
+  const [selectedPrivateUserId, setSelectedPrivateUserId] =
+    useState(null);
+
+  const privateThreadEndRef =
+    useRef(null);
+
 
   const [replyPost, setReplyPost] =
     useState(null);
 
   const [replyBody, setReplyBody] =
     useState('');
+
+  const [replyAttachment, setReplyAttachment] =
+    useState(null);
+
+  const [confirmAttachmentOnlyReply, setConfirmAttachmentOnlyReply] =
+    useState(false);
 
   const [forwardPost, setForwardPost] =
     useState(null);
@@ -307,7 +599,70 @@ function DirectPostsPanel({
     setReplyPost(item);
 
     setReplyBody('');
+    setReplyAttachment(null);
 
+  }
+
+
+  function chooseReplyAttachment(event) {
+
+    const file =
+      event.currentTarget.files?.[0] || null;
+
+    event.currentTarget.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    const maxSize =
+      10 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      notify(
+        'Attachments must be smaller than 10 MB.'
+      );
+      return;
+    }
+
+    const extension =
+      file.name
+        .split('.')
+        .pop()
+        ?.toLowerCase() || '';
+
+    const blockedExtensions = [
+      'exe', 'msi', 'bat', 'cmd', 'com',
+      'scr', 'ps1', 'sh', 'js', 'jar'
+    ];
+
+    if (blockedExtensions.includes(extension)) {
+      notify('This file type is not allowed.');
+      return;
+    }
+
+    setReplyAttachment(file);
+  }
+
+
+  function requestReplySend() {
+
+    if (
+      !replyBody.trim() &&
+      !replyAttachment
+    ) {
+      return;
+    }
+
+    if (
+      !replyBody.trim() &&
+      replyAttachment
+    ) {
+      setConfirmAttachmentOnlyReply(true);
+      return;
+    }
+
+    sendReply();
   }
 
 
@@ -315,18 +670,17 @@ function DirectPostsPanel({
 
     if (
       !replyPost ||
-      !replyBody.trim()
+      (!replyBody.trim() &&
+        !replyAttachment)
     ) {
       return;
     }
-
 
     const recipientId =
       replyPost.sender_id ===
         profile.id
         ? replyPost.recipient_id
         : replyPost.sender_id;
-
 
     const subject =
       replyPost.subject
@@ -339,37 +693,96 @@ function DirectPostsPanel({
         )
         : 'Re: Private post';
 
+    let attachmentPath = null;
 
-    const {
-      error
-    } = await supabase
-      .from('direct_posts')
-      .insert({
-        sender_id:
-          profile.id,
-        recipient_id:
-          recipientId,
-        subject,
-        body:
-          replyBody.trim()
-      });
+    try {
+      if (replyAttachment) {
+        const rawExtension =
+          replyAttachment.name
+            .split('.')
+            .pop()
+            ?.toLowerCase() || '';
 
+        const extension =
+          rawExtension
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 12);
 
-    if (error) {
-      notify(error.message);
-      return;
+        const suffix =
+          extension
+            ? `.${extension}`
+            : '';
+
+        attachmentPath =
+          `${recipientId}/${profile.id}/${createBrowserSafeId()}${suffix}`;
+
+        const {
+          error: uploadError
+        } = await supabase.storage
+          .from('direct-post-attachments')
+          .upload(
+            attachmentPath,
+            replyAttachment,
+            {
+              cacheControl: '3600',
+              contentType:
+                replyAttachment.type ||
+                'application/octet-stream'
+            }
+          );
+
+        if (uploadError) {
+          throw uploadError;
+        }
+      }
+
+      const {
+        error
+      } = await supabase
+        .from('direct_posts')
+        .insert({
+          sender_id:
+            profile.id,
+          recipient_id:
+            recipientId,
+          subject,
+          body:
+            replyBody.trim(),
+          attachment_name:
+            replyAttachment?.name || null,
+          attachment_path:
+            attachmentPath,
+          attachment_mime_type:
+            replyAttachment?.type || null,
+          attachment_size:
+            replyAttachment?.size || null
+        });
+
+      if (error) {
+        if (attachmentPath) {
+          await supabase.storage
+            .from('direct-post-attachments')
+            .remove([attachmentPath]);
+        }
+        throw error;
+      }
+
+      setReplyPost(null);
+      setReplyBody('');
+      setReplyAttachment(null);
+      setConfirmAttachmentOnlyReply(false);
+
+      notify('Reply sent.');
+
+      loadPosts();
+
+    } catch (error) {
+      notify(
+        error?.message ||
+        'Could not send reply.'
+      );
     }
-
-
-    setReplyPost(null);
-    setReplyBody('');
-
-    notify('Reply sent.');
-
-    loadPosts();
-
   }
-
 
   async function beginForward(item) {
 
@@ -443,6 +856,37 @@ function DirectPostsPanel({
   }
 
 
+  async function openPrivatePostAttachment(
+    item
+  ) {
+
+    if (!item?.attachment_path) {
+      return;
+    }
+
+    const {
+      data,
+      error
+    } = await supabase.storage
+      .from('direct-post-attachments')
+      .createSignedUrl(
+        item.attachment_path,
+        300
+      );
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    window.open(
+      data.signedUrl,
+      '_blank',
+      'noopener,noreferrer'
+    );
+  }
+
+
   async function deletePostForMe(postId) {
 
     const { error } = await supabase
@@ -468,6 +912,86 @@ function DirectPostsPanel({
       'Post removed from your Messages.'
     );
   }
+
+
+  const privateThreadsByUser = {};
+
+  posts.forEach(item => {
+    const otherId =
+      item.sender_id === profile.id
+        ? item.recipient_id
+        : item.sender_id;
+
+    if (!otherId) {
+      return;
+    }
+
+    if (!privateThreadsByUser[otherId]) {
+      privateThreadsByUser[otherId] = [];
+    }
+
+    privateThreadsByUser[otherId].push(item);
+  });
+
+  const privateThreadSummaries =
+    Object.entries(privateThreadsByUser)
+      .map(([userId, items]) => {
+        const sorted =
+          [...items].sort(
+            (a, b) =>
+              new Date(b.created_at) -
+              new Date(a.created_at)
+          );
+
+        return {
+          userId,
+          latest: sorted[0],
+          unreadCount:
+            items.filter(item =>
+              item.recipient_id === profile.id &&
+              !item.read_at
+            ).length
+        };
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.latest.created_at) -
+          new Date(a.latest.created_at)
+      );
+
+  const selectedPrivateThread =
+    selectedPrivateUserId
+      ? (
+        privateThreadsByUser[
+          selectedPrivateUserId
+        ] || []
+      )
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.created_at) -
+            new Date(b.created_at)
+        )
+      : [];
+
+  useEffect(() => {
+    if (
+      !selectedPrivateUserId ||
+      selectedPrivateThread.length === 0
+    ) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      privateThreadEndRef.current
+        ?.scrollIntoView({
+          behavior: 'auto',
+          block: 'end'
+        });
+    });
+  }, [
+    selectedPrivateUserId
+  ]);
 
 
   return (
@@ -502,7 +1026,190 @@ function DirectPostsPanel({
           Loading private posts…
         </div>
 
-      ) : posts.length === 0 ? (
+      ) : selectedPrivateUserId ? (
+
+        <div>
+          <button
+            type="button"
+            className="btn subtle"
+            onClick={() =>
+              setSelectedPrivateUserId(null)
+            }
+            style={{
+              marginBottom: 12
+            }}
+          >
+            ← Back to private posts
+          </button>
+
+          <div
+            style={{
+              maxHeight:
+                'min(64vh, 620px)',
+              overflowY: 'auto',
+              display: 'grid',
+              gap: 10,
+              paddingRight: 2
+            }}
+          >
+            {selectedPrivateThread.map(item => {
+
+              const incoming =
+                item.recipient_id ===
+                  profile.id;
+
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent:
+                      incoming
+                        ? 'flex-start'
+                        : 'flex-end'
+                  }}
+                >
+                  <div
+                    style={{
+                      width:
+                        'min(88%, 680px)',
+                      border:
+                        '1px solid rgba(0,0,0,0.08)',
+                      borderRadius: 14,
+                      padding: 14,
+                      background:
+                        incoming
+                          ? '#fff'
+                          : 'rgba(37,99,235,0.07)'
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent:
+                          'space-between',
+                        gap: 10,
+                        alignItems:
+                          'baseline',
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <b>
+                        {incoming
+                          ? 'Received'
+                          : 'Sent'}
+                      </b>
+
+                      <small className="muted">
+                        {fmtDate(item.created_at)}
+                      </small>
+                    </div>
+
+                    {item.subject && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          fontWeight: 700
+                        }}
+                      >
+                        {item.subject}
+                      </div>
+                    )}
+
+                    {item.body && (
+                      <div
+                        style={{
+                          marginTop: 6,
+                          whiteSpace:
+                            'pre-wrap',
+                          overflowWrap:
+                            'anywhere'
+                        }}
+                      >
+                        {item.body}
+                      </div>
+                    )}
+
+                    {item.attachment_path && (
+                      <SecureAttachmentPreview
+                        bucket="direct-post-attachments"
+                        storagePath={item.attachment_path}
+                        fileName={item.attachment_name}
+                        mimeType={item.attachment_mime_type}
+                        size={item.attachment_size}
+                        notify={notify}
+                        compact
+                      />
+                    )}
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        flexWrap: 'wrap',
+                        marginTop: 9
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="btn subtle"
+                        onClick={() =>
+                          beginReply(item)
+                        }
+                        style={{
+                          padding:
+                            '6px 9px',
+                          fontSize: 11
+                        }}
+                      >
+                        Reply
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn subtle"
+                        onClick={() =>
+                          beginForward(item)
+                        }
+                        style={{
+                          padding:
+                            '6px 9px',
+                          fontSize: 11
+                        }}
+                      >
+                        Forward
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn subtle"
+                        onClick={() =>
+                          deletePostForMe(
+                            item.id
+                          )
+                        }
+                        style={{
+                          padding:
+                            '6px 9px',
+                          fontSize: 11
+                        }}
+                      >
+                        <Trash2 size={13} />
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div
+              ref={privateThreadEndRef}
+            />
+          </div>
+        </div>
+
+      ) : privateThreadSummaries.length === 0 ? (
 
         <div className="empty compact">
           No private posts yet.
@@ -513,55 +1220,56 @@ function DirectPostsPanel({
         <div
           style={{
             display: 'grid',
-            gap: 10
+            gap: 8
           }}
         >
+          {privateThreadSummaries.map(
+            thread => {
 
-          {posts
-            .slice(0, 12)
-            .map(item => {
-
-              const incoming =
-                item.recipient_id ===
-                profile.id;
+              const item =
+                thread.latest;
 
               const otherId =
-                incoming
-                  ? item.sender_id
-                  : item.recipient_id;
+                thread.userId;
 
               const person =
                 peopleById[
                   otherId
                 ] || {};
 
-              return (
+              const incoming =
+                item.recipient_id ===
+                  profile.id;
 
-                <div
-                  key={item.id}
+              return (
+                <button
+                  type="button"
+                  key={otherId}
+                  onClick={() =>
+                    setSelectedPrivateUserId(
+                      otherId
+                    )
+                  }
                   style={{
+                    width: '100%',
                     border:
                       '1px solid rgba(0,0,0,0.08)',
-                    borderRadius: 12,
+                    borderRadius: 14,
                     padding: 12,
+                    background:
+                      thread.unreadCount > 0
+                        ? 'rgba(37,99,235,0.05)'
+                        : '#fff',
                     display: 'flex',
                     gap: 10,
-                    alignItems:
-                      'flex-start',
-                    background:
-                      incoming &&
-                      !item.read_at
-                        ? 'rgba(37,99,235,0.05)'
-                        : 'transparent'
+                    alignItems: 'center',
+                    textAlign: 'left',
+                    cursor: 'pointer'
                   }}
                 >
-
                   <Avatar
-                    profile={
-                      person
-                    }
+                    profile={person}
                   />
-
 
                   <div
                     style={{
@@ -569,22 +1277,17 @@ function DirectPostsPanel({
                       flex: 1
                     }}
                   >
-
                     <div
                       style={{
                         display: 'flex',
                         justifyContent:
                           'space-between',
-                        gap: 10,
-                        flexWrap:
-                          'wrap'
+                        gap: 8,
+                        alignItems:
+                          'baseline'
                       }}
                     >
-
                       <b>
-                        {incoming
-                          ? 'From'
-                          : 'To'}{' '}
                         {person.name ||
                           'Student'}{' '}
                         {person.surname ||
@@ -596,115 +1299,53 @@ function DirectPostsPanel({
                           item.created_at
                         )}
                       </small>
-
                     </div>
-
-
-                    {item.subject && (
-                      <div
-                        style={{
-                          marginTop: 6,
-                          fontWeight: 700
-                        }}
-                      >
-                        Subject: {item.subject}
-                      </div>
-                    )}
-
 
                     <div
                       style={{
-                        marginTop: 6,
+                        marginTop: 3,
+                        overflow: 'hidden',
+                        textOverflow:
+                          'ellipsis',
                         whiteSpace:
-                          'pre-wrap',
-                        overflowWrap:
-                          'anywhere'
-                      }}
-                    >
-                      {item.body}
-                    </div>
-
-
-                    <small
-                      className="muted"
-                      style={{
-                        display:
-                          'block',
-                        marginTop: 6
+                          'nowrap',
+                        fontSize: 13
                       }}
                     >
                       {incoming
-                        ? 'Private post received'
-                        : item.read_at
-                          ? 'Read'
-                          : 'Sent'}
-                    </small>
-
-                    <div
-                      style={{
-                        display: 'flex',
-                        gap: 6,
-                        flexWrap: 'wrap',
-                        marginTop: 8
-                      }}
-                    >
-
-                      <button
-                        type="button"
-                        className="btn subtle"
-                        onClick={() =>
-                          beginReply(item)
-                        }
-                        style={{
-                          padding: '6px 9px',
-                          fontSize: 11
-                        }}
-                      >
-                        Reply
-                      </button>
-
-
-                      <button
-                        type="button"
-                        className="btn subtle"
-                        onClick={() =>
-                          beginForward(item)
-                        }
-                        style={{
-                          padding: '6px 9px',
-                          fontSize: 11
-                        }}
-                      >
-                        Forward
-                      </button>
-
-
-                    <button
-                      type="button"
-                      className="btn subtle"
-                      onClick={() =>
-                        deletePostForMe(item.id)
-                      }
-                      style={{
-                        marginTop: 8,
-                        padding: '6px 9px',
-                        fontSize: 11
-                      }}
-                    >
-                      <Trash2 size={13} />
-                      Delete
-                    </button>
-
+                        ? ''
+                        : 'You: '}
+                      {item.body ||
+                        item.attachment_name ||
+                        item.subject ||
+                        'Private post'}
                     </div>
-
                   </div>
 
-                </div>
-
+                  {thread.unreadCount > 0 && (
+                    <span
+                      style={{
+                        minWidth: 22,
+                        height: 22,
+                        borderRadius: 999,
+                        display:
+                          'inline-grid',
+                        placeItems:
+                          'center',
+                        background:
+                          '#2563eb',
+                        color: '#fff',
+                        fontSize: 11,
+                        fontWeight: 800
+                      }}
+                    >
+                      {thread.unreadCount}
+                    </span>
+                  )}
+                </button>
               );
-
-            })}
-
+            }
+          )}
         </div>
 
       )}
@@ -737,7 +1378,9 @@ function DirectPostsPanel({
             }
             style={{
               width:
-                'min(560px, 94vw)'
+                'min(640px, 94vw)',
+              padding: 20,
+              boxSizing: 'border-box'
             }}
           >
             <span className="eyebrow dark">
@@ -754,8 +1397,8 @@ function DirectPostsPanel({
 
             <div
               style={{
-                padding: 10,
-                borderRadius: 10,
+                padding: 12,
+                borderRadius: 12,
                 background:
                   'rgba(15,23,42,0.05)',
                 marginBottom: 10,
@@ -776,9 +1419,89 @@ function DirectPostsPanel({
                 )
               }
               style={{
-                minHeight: 140
+                width: '100%',
+                minHeight: 180,
+                resize: 'vertical',
+                boxSizing: 'border-box'
               }}
             />
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginTop: 10
+              }}
+            >
+              <label
+                className="btn subtle"
+                style={{
+                  position: 'relative',
+                  overflow: 'hidden',
+                  cursor: 'pointer'
+                }}
+              >
+                <Paperclip size={15} />
+                Attach document
+
+                <input
+                  type="file"
+                  onChange={
+                    chooseReplyAttachment
+                  }
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    opacity: 0,
+                    cursor: 'pointer'
+                  }}
+                />
+              </label>
+
+              {replyAttachment && (
+                <div
+                  className="btn subtle"
+                  style={{
+                    cursor: 'default',
+                    maxWidth: '100%'
+                  }}
+                >
+                  <Paperclip size={14} />
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: 320
+                    }}
+                  >
+                    {replyAttachment.name}
+                  </span>
+
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Remove attachment"
+                    aria-label="Remove attachment"
+                    onClick={() =>
+                      setReplyAttachment(null)
+                    }
+                    style={{
+                      width: 24,
+                      height: 24,
+                      minWidth: 24
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+            </div>
+
 
             <div
               style={{
@@ -792,9 +1515,11 @@ function DirectPostsPanel({
               <button
                 type="button"
                 className="btn subtle"
-                onClick={() =>
-                  setReplyPost(null)
-                }
+                onClick={() => {
+                  setReplyPost(null);
+                  setReplyAttachment(null);
+                  setConfirmAttachmentOnlyReply(false);
+                }}
               >
                 Cancel
               </button>
@@ -803,10 +1528,11 @@ function DirectPostsPanel({
                 type="button"
                 className="btn primary"
                 disabled={
-                  !replyBody.trim()
+                  !replyBody.trim() &&
+                  !replyAttachment
                 }
                 onClick={
-                  sendReply
+                  requestReplySend
                 }
               >
                 Reply
@@ -815,6 +1541,90 @@ function DirectPostsPanel({
           </div>
         </div>
 
+      )}
+
+
+      {confirmAttachmentOnlyReply && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Send attachment without message"
+          onClick={() =>
+            setConfirmAttachmentOnlyReply(false)
+          }
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 12050,
+            background:
+              'rgba(15,23,42,0.58)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            className="card"
+            onClick={event =>
+              event.stopPropagation()
+            }
+            style={{
+              width:
+                'min(430px, 94vw)',
+              padding: 20,
+              boxSizing:
+                'border-box'
+            }}
+          >
+            <h3
+              style={{
+                marginTop: 0
+              }}
+            >
+              Send attachment without text?
+            </h3>
+
+            <p
+              className="muted"
+              style={{
+                marginBottom: 18
+              }}
+            >
+              Your reply has an attachment but no written message. Do you want to send it anyway?
+            </p>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent:
+                  'flex-end',
+                gap: 8,
+                flexWrap: 'wrap'
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() =>
+                  setConfirmAttachmentOnlyReply(false)
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="btn primary"
+                onClick={
+                  sendReply
+                }
+              >
+                Yes, send
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
 
@@ -967,10 +1777,14 @@ export function PostOffice({
 
   const [messages, setMessages] = useState([]);
   const messagesEndRef = useRef(null);
+  const messageScrollRef = useRef(null);
+  const keepChatPinnedToBottomRef = useRef(true);
   const messageInputRef = useRef(null);
+  const conversationCardRef = useRef(null);
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [chatViewportReady, setChatViewportReady] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -986,6 +1800,13 @@ export function PostOffice({
 
   const [inboxTab, setInboxTab] =
     useState('chats');
+
+  const [messageCategory, setMessageCategory] =
+    useState(
+      compact
+        ? 'chat'
+        : null
+    );
 
   const [conversationMenuOpen, setConversationMenuOpen] =
     useState(false);
@@ -1030,28 +1851,124 @@ export function PostOffice({
      LOAD CONVERSATIONS + AVAILABLE CONNECTIONS
      ------------------------------------------------------- */
 
-  function scrollMessagesToBottom(
-    behavior = 'auto'
-  ) {
-
-    window.requestAnimationFrame(() => {
-      messagesEndRef.current
-        ?.scrollIntoView({
-          behavior,
-          block: 'end'
-        });
-    });
-  }
-
-
   useEffect(() => {
     setConversationMenuOpen(false);
     setEmojiOpen(false);
     setGifOpen(false);
+    keepChatPinnedToBottomRef.current =
+      true;
   }, [selectedConversationId]);
 
 
   useEffect(() => {
+
+    if (!selectedConversationId) {
+      document.documentElement.style
+        .removeProperty(
+          '--onstood-mobile-chat-height'
+        );
+      return;
+    }
+
+    const viewport =
+      window.visualViewport;
+
+    function syncMobileChatHeight() {
+
+      if (
+        window.innerWidth > 760 ||
+        !conversationCardRef.current
+      ) {
+        document.documentElement.style
+          .removeProperty(
+            '--onstood-mobile-chat-height'
+          );
+        return;
+      }
+
+      const viewportHeight =
+        viewport?.height ||
+        window.innerHeight;
+
+      const top =
+        conversationCardRef.current
+          .getBoundingClientRect()
+          .top;
+
+      const visibleBottom =
+        (viewport?.offsetTop || 0) +
+        viewportHeight;
+
+      const mobileBottomNavReserve =
+        104;
+
+      const available =
+        Math.max(
+          220,
+          Math.floor(
+            visibleBottom -
+            top -
+            mobileBottomNavReserve
+          )
+        );
+
+      document.documentElement.style
+        .setProperty(
+          '--onstood-mobile-chat-height',
+          `${available}px`
+        );
+    }
+
+    syncMobileChatHeight();
+
+    viewport?.addEventListener(
+      'resize',
+      syncMobileChatHeight
+    );
+    viewport?.addEventListener(
+      'scroll',
+      syncMobileChatHeight
+    );
+    window.addEventListener(
+      'resize',
+      syncMobileChatHeight
+    );
+    window.addEventListener(
+      'orientationchange',
+      syncMobileChatHeight
+    );
+
+    return () => {
+      viewport?.removeEventListener(
+        'resize',
+        syncMobileChatHeight
+      );
+      viewport?.removeEventListener(
+        'scroll',
+        syncMobileChatHeight
+      );
+      window.removeEventListener(
+        'resize',
+        syncMobileChatHeight
+      );
+      window.removeEventListener(
+        'orientationchange',
+        syncMobileChatHeight
+      );
+
+      document.documentElement.style
+        .removeProperty(
+          '--onstood-mobile-chat-height'
+        );
+    };
+
+  }, [
+    selectedConversationId
+  ]);
+
+
+
+  useLayoutEffect(() => {
 
     if (
       !selectedConversationId ||
@@ -1060,32 +1977,74 @@ export function PostOffice({
       return;
     }
 
-    scrollMessagesToBottom('auto');
+    const scroller =
+      messageScrollRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    /*
+     * Initial position only. The viewport is hidden while we establish
+     * the bottom, so the user never sees the history move.
+     */
+    setChatViewportReady(false);
+
+    scroller.scrollTop =
+      scroller.scrollHeight;
+
+    const timer =
+      window.setTimeout(() => {
+        scroller.scrollTop =
+          scroller.scrollHeight;
+
+        setChatViewportReady(true);
+      }, 120);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
 
   }, [
     selectedConversationId,
     loadingMessages
   ]);
 
-  useEffect(() => {
-    if (!selectedConversationId || loadingMessages || !isOtherOnline) return;
-    window.requestAnimationFrame(() => messageInputRef.current?.focus());
-  }, [selectedConversationId, loadingMessages, isOtherOnline]);
-
 
   useEffect(() => {
 
     if (
       !selectedConversationId ||
-      messages.length === 0
+      loadingMessages ||
+      !chatViewportReady ||
+      messages.length === 0 ||
+      !keepChatPinnedToBottomRef.current
     ) {
       return;
     }
 
-    scrollMessagesToBottom('smooth');
+    const scroller =
+      messageScrollRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    /*
+     * During a live conversation, if the user is already at the bottom,
+     * keep each new message visible. If the user scrolls up to read
+     * history, do not pull the viewport back down.
+     */
+    window.requestAnimationFrame(() => {
+      scroller.scrollTop =
+        scroller.scrollHeight;
+    });
 
   }, [
-    messages.length
+    messages.length,
+    selectedConversationId,
+    loadingMessages,
+    chatViewportReady
   ]);
 
 
@@ -1283,6 +2242,8 @@ export function PostOffice({
       if (
         requestedConversationId
       ) {
+
+        setMessageCategory('chat');
         const requestedRow =
           rows.find(item =>
             item.conversation_id ===
@@ -1361,11 +2322,35 @@ export function PostOffice({
       return;
     }
 
+    /*
+     * Desktop keeps the established small floating MiniChat.
+     * Mobile has no onOpenMiniChat handler and therefore opens
+     * the conversation inside the mobile Messages screen.
+     */
+    if (
+      !compact &&
+      typeof onOpenMiniChat ===
+        'function'
+    ) {
+      onOpenMiniChat(
+        requestedUserId,
+        null
+      );
+      onConversationResolved?.(
+        null
+      );
+      return;
+    }
+
     startConversation(
       requestedUserId
     );
 
-  }, [requestedUserId]);
+  }, [
+    requestedUserId,
+    compact,
+    onOpenMiniChat
+  ]);
 
 
   useEffect(() => {
@@ -1379,6 +2364,36 @@ export function PostOffice({
         item.conversation_id ===
           requestedConversationId
       );
+
+    /*
+     * Desktop: requested chats belong in the original small
+     * floating MiniChat next to Online connections — never as
+     * a giant full-page conversation.
+     *
+     * Mobile: onOpenMiniChat is null, so the same conversation
+     * continues to open in the full mobile chat screen.
+     */
+    if (
+      !compact &&
+      typeof onOpenMiniChat ===
+        'function'
+    ) {
+      onOpenMiniChat(
+        requestedRow?.other_user_id ||
+          null,
+        requestedConversationId
+      );
+
+      setSelectedConversationId(
+        null
+      );
+
+      onConversationResolved?.(
+        null
+      );
+
+      return;
+    }
 
     if (requestedRow) {
       setInboxTab(
@@ -1400,7 +2415,9 @@ export function PostOffice({
 
   }, [
     requestedConversationId,
-    conversations
+    conversations,
+    compact,
+    onOpenMiniChat
   ]);
 
 
@@ -1980,7 +2997,7 @@ export function PostOffice({
           );
 
       const storagePath =
-        `${selectedConversationId}/${profile.id}/${crypto.randomUUID()}-${safeName}`;
+        `${selectedConversationId}/${profile.id}/${createBrowserSafeId()}-${safeName}`;
 
       const {
         error: uploadError
@@ -2869,7 +3886,101 @@ export function PostOffice({
     >
 
       {!compact &&
-      !selectedConversation && (
+      !messageCategory && (
+        <div
+          className="onstood-message-category-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns:
+              'repeat(2, minmax(0, 1fr))',
+            gap: 14,
+            marginBottom: 18
+          }}
+        >
+          <button
+            type="button"
+            className="card"
+            onClick={() =>
+              setMessageCategory(
+                'private'
+              )
+            }
+            style={{
+              padding: 20,
+              border:
+                '1px solid rgba(15,23,42,.08)',
+              background: '#fff',
+              cursor: 'pointer',
+              textAlign: 'left'
+            }}
+          >
+            <Mail size={24} />
+            <h3
+              style={{
+                margin:
+                  '10px 0 4px'
+              }}
+            >
+              Private posts
+            </h3>
+            <div className="muted">
+              Send now, read later. Open the latest conversation with each person.
+            </div>
+          </button>
+
+          <button
+            type="button"
+            className="card"
+            onClick={() =>
+              setMessageCategory(
+                'chat'
+              )
+            }
+            style={{
+              padding: 20,
+              border:
+                '1px solid rgba(15,23,42,.08)',
+              background: '#fff',
+              cursor: 'pointer',
+              textAlign: 'left'
+            }}
+          >
+            <Send size={24} />
+            <h3
+              style={{
+                margin:
+                  '10px 0 4px'
+              }}
+            >
+              Chat
+            </h3>
+            <div className="muted">
+              Live conversations with your connections.
+            </div>
+          </button>
+        </div>
+      )}
+
+      {!compact &&
+      messageCategory && (
+        <button
+          type="button"
+          className="btn subtle"
+          onClick={() => {
+            setMessageCategory(null);
+            setSelectedConversationId(null);
+          }}
+          style={{
+            marginBottom: 12
+          }}
+        >
+          ← Messages
+        </button>
+      )}
+
+      {!compact &&
+      messageCategory ===
+        'private' && (
         <DirectPostsPanel
           profile={profile}
           notify={notify}
@@ -2877,6 +3988,9 @@ export function PostOffice({
       )}
 
 
+      {(compact ||
+        messageCategory ===
+          'chat') && (
       <div
         className="postoffice-layout"
         style={{
@@ -3332,7 +4446,10 @@ export function PostOffice({
             CONVERSATION
             ================================================= */}
 
+        {(compact ||
+          selectedConversation) && (
         <div
+          ref={conversationCardRef}
           className="card postoffice-conversation-card"
           style={{
             flex:
@@ -3371,7 +4488,7 @@ export function PostOffice({
             >
               <Mail size={34} />
               <h3>
-                Your ONSTOOD Messages
+                Your <OnstoodWordmark /> Messages
               </h3>
               <p>
                 Select a conversation or start one with an accepted connection.
@@ -3700,7 +4817,20 @@ export function PostOffice({
               {/* MESSAGES */}
 
               <div
+                ref={messageScrollRef}
                 className="postoffice-message-scroll"
+                onScroll={event => {
+                  const element =
+                    event.currentTarget;
+
+                  const distanceFromBottom =
+                    element.scrollHeight -
+                    element.scrollTop -
+                    element.clientHeight;
+
+                  keepChatPinnedToBottomRef.current =
+                    distanceFromBottom <= 48;
+                }}
                 style={{
                   flex: 1,
                   minHeight: 0,
@@ -3708,6 +4838,8 @@ export function PostOffice({
                     'auto',
                   overflowX:
                     'hidden',
+                  scrollBehavior:
+                    'auto',
                   padding:
                     compact
                       ? 10
@@ -3831,25 +4963,15 @@ export function PostOffice({
                             ) : message.message_type ===
                               'file' ? (
 
-                              <button
-                                type="button"
-                                className="btn subtle"
-                                onClick={() =>
-                                  openAttachment(
-                                    message
-                                  )
-                                }
-                              >
-                                <Paperclip
-                                  size={
-                                    15
-                                  }
-                                />
-                                {message
-                                  .metadata
-                                  ?.file_name ||
-                                  'Attachment'}
-                              </button>
+                              <SecureAttachmentPreview
+                                bucket="message-attachments"
+                                storagePath={message.metadata?.storage_path}
+                                fileName={message.metadata?.file_name}
+                                mimeType={message.metadata?.mime_type}
+                                size={message.metadata?.size}
+                                notify={notify}
+                                compact
+                              />
 
                             ) : message.message_type ===
                               'gif' &&
@@ -3893,7 +5015,7 @@ export function PostOffice({
                                     color: '#5b50e6'
                                   }}
                                 >
-                                  ↗ ONSTOOD post
+                                  ↗ <OnstoodWordmark /> post
                                 </small>
 
                                 <div
@@ -3915,7 +5037,7 @@ export function PostOffice({
                                     marginTop: 7
                                   }}
                                 >
-                                  Shared inside ONSTOOD
+                                  Shared inside <OnstoodWordmark />
                                 </small>
                               </div>
 
@@ -4027,7 +5149,12 @@ export function PostOffice({
                 )}
 
 
-                {lastOwnMessage && (
+                {messages.length > 0 &&
+                messages[
+                  messages.length - 1
+                ]?.sender_id ===
+                  profile.id &&
+                lastOwnMessage && (
 
                   <div
                     style={{
@@ -4156,7 +5283,9 @@ export function PostOffice({
                       !isOtherOnline
                         ? 'default'
                         : 'pointer',
-                    flexShrink: 0
+                    flexShrink: 0,
+                    position: 'relative',
+                    overflow: 'hidden'
                   }}
                 >
                   <span
@@ -4174,7 +5303,6 @@ export function PostOffice({
                   <input
                     type="file"
                     accept="image/*,video/*"
-                    hidden
                     disabled={
                       uploading ||
                       !isOtherOnline
@@ -4182,6 +5310,14 @@ export function PostOffice({
                     onChange={
                       uploadAttachment
                     }
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: 'pointer'
+                    }}
                   />
                 </label>
 
@@ -4195,7 +5331,9 @@ export function PostOffice({
                       !isOtherOnline
                         ? 'default'
                         : 'pointer',
-                    flexShrink: 0
+                    flexShrink: 0,
+                    position: 'relative',
+                    overflow: 'hidden'
                   }}
                 >
 
@@ -4205,7 +5343,7 @@ export function PostOffice({
 
                   <input
                     type="file"
-                    hidden
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.rtf,.odt,.ods,.odp,application/pdf"
                     disabled={
                       uploading ||
                       !isOtherOnline
@@ -4213,6 +5351,14 @@ export function PostOffice({
                     onChange={
                       uploadAttachment
                     }
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: 'pointer'
+                    }}
                   />
 
                 </label>
@@ -4447,8 +5593,11 @@ export function PostOffice({
           )}
 
         </div>
+        )}
 
       </div>
+
+      )}
 
       {reportOpen && (
         <div
@@ -4499,7 +5648,7 @@ export function PostOffice({
                     marginTop: 2
                   }}
                 >
-                  Send this conversation to ONSTOOD moderation.
+                  Send this conversation to <OnstoodWordmark /> moderation.
                 </div>
               </div>
 
@@ -4806,7 +5955,7 @@ export function MiniChat({
         <div>
           <b>Live chat</b>
           <div className="muted" style={{fontSize: 11}}>
-            ONSTOOD mini chat
+            <OnstoodWordmark /> mini chat
           </div>
         </div>
 

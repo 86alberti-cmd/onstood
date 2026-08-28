@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { BookOpen, BriefcaseBusiness } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
@@ -120,7 +121,7 @@ export function Auth({ onReady }) {
       : 'https://onstood.com';
 
   const signupReturnUrl =
-    `${authBaseUrl}/?onstood_confirm=1`;
+    `${authBaseUrl}/`;
 
   const recoveryReturnUrl =
     `${authBaseUrl}/?onstood_recovery=1`;
@@ -226,12 +227,112 @@ export function Auth({ onReady }) {
         return;
       }
 
+      const normalizedEmail =
+        form.email.trim().toLowerCase();
+
+      const signupMetadata = {
+        account_type:
+          form.account_type || 'student',
+        name: form.name,
+        surname: form.surname,
+        university:
+          form.account_type === 'student'
+            ? form.university
+            : '',
+        degree:
+          form.account_type === 'student'
+            ? form.degree
+            : '',
+        year:
+          form.account_type === 'student'
+            ? form.year
+            : '',
+        company_name:
+          form.account_type === 'employer'
+            ? form.company_name
+            : '',
+        company_website:
+          form.account_type === 'employer'
+            ? form.company_website
+            : '',
+        company_role:
+          form.account_type === 'employer'
+            ? form.company_role
+            : '',
+        company_description:
+          form.account_type === 'employer'
+            ? form.company_description
+            : ''
+      };
+
+      /*
+       * ONSTOOD registration rule:
+       * - confirmed email -> stop and ask the user to sign in
+       * - unconfirmed email -> replace the pending registration details/password
+       *   and send a fresh confirmation email
+       * - new email -> continue with the normal Supabase signUp flow below
+       */
+      const {
+        data: pendingSignup,
+        error: pendingSignupError
+      } = await supabase.functions.invoke(
+        'onstood-resend-confirmation',
+        {
+          body: {
+            email: normalizedEmail,
+            password: form.password,
+            redirectTo: signupReturnUrl,
+            metadata: signupMetadata
+          }
+        }
+      );
+
+      if (pendingSignupError) {
+        setMessage(
+          'Could not verify this registration right now. Please try again.'
+        );
+        return;
+      }
+
+      if (pendingSignup?.status === 'already_confirmed') {
+        setMessage(
+          'This email is already used for an account. Please sign in.'
+        );
+        return;
+      }
+
+      if (pendingSignup?.status === 'resent') {
+        setMessage(
+          'Your pending registration was updated. Check your email and use the newest confirmation link.'
+        );
+        return;
+      }
+
+      if (
+        pendingSignup?.status ===
+        'unconfirmed_updated_email_not_sent'
+      ) {
+        setMessage(
+          pendingSignup.message ||
+          'Your pending registration was updated, but the confirmation email could not be sent yet. Please try again shortly.'
+        );
+        return;
+      }
+
+      if (pendingSignup?.status !== 'not_found') {
+        setMessage(
+          pendingSignup?.error ||
+          'Could not complete registration. Please try again.'
+        );
+        return;
+      }
+
       const {
         data,
         error
       } = await supabase.auth.signUp({
 
-        email: form.email,
+        email: normalizedEmail,
         password: form.password,
 
         options: {
@@ -239,40 +340,7 @@ export function Auth({ onReady }) {
           emailRedirectTo:
             signupReturnUrl,
 
-          data: {
-            account_type:
-              form.account_type || 'student',
-            name: form.name,
-            surname: form.surname,
-            university:
-              form.account_type === 'student'
-                ? form.university
-                : '',
-            degree:
-              form.account_type === 'student'
-                ? form.degree
-                : '',
-            year:
-              form.account_type === 'student'
-                ? form.year
-                : '',
-            company_name:
-              form.account_type === 'employer'
-                ? form.company_name
-                : '',
-            company_website:
-              form.account_type === 'employer'
-                ? form.company_website
-                : '',
-            company_role:
-              form.account_type === 'employer'
-                ? form.company_role
-                : '',
-            company_description:
-              form.account_type === 'employer'
-                ? form.company_description
-                : ''
-          }
+          data: signupMetadata
 
         }
 
@@ -405,7 +473,7 @@ export function Auth({ onReady }) {
 
         <div className="auth-left">
           <div className="brand huge">
-            ONSTOOD<span>.</span>
+            <OnstoodWordmark /><span>.</span>
           </div>
 
           <h1>
@@ -415,7 +483,7 @@ export function Auth({ onReady }) {
           </h1>
 
           <p>
-            Enter the email address connected to your ONSTOOD account.
+            Enter the email address connected to your <OnstoodWordmark /> account.
             We will send you a secure link to create a new password.
           </p>
 
@@ -428,7 +496,7 @@ export function Auth({ onReady }) {
 
         <div className="auth-card">
           <div className="brand">
-            ONSTOOD<span>.</span>
+            <OnstoodWordmark /><span>.</span>
           </div>
 
           <h2 style={{ marginBottom: 6 }}>
@@ -488,7 +556,7 @@ export function Auth({ onReady }) {
           </form>
 
           <small className="muted">
-            For your privacy, ONSTOOD does not display your old password.
+            For your privacy, <OnstoodWordmark /> does not display your old password.
           </small>
         </div>
 
@@ -512,7 +580,7 @@ export function Auth({ onReady }) {
       <div className="auth-left">
 
         <div className="brand huge">
-          ONSTOOD<span>.</span>
+          <OnstoodWordmark /><span>.</span>
         </div>
 
         <h1>
@@ -549,7 +617,7 @@ export function Auth({ onReady }) {
       <div className="auth-card">
 
         <div className="brand">
-          ONSTOOD<span>.</span>
+          <OnstoodWordmark /><span>.</span>
         </div>
 
         <p className="muted">
@@ -1086,7 +1154,7 @@ export function ResetPassword({ onDone }) {
       <div className="auth-left">
 
         <div className="brand huge">
-          ONSTOOD<span>.</span>
+          <OnstoodWordmark /><span>.</span>
         </div>
 
         <h1>
@@ -1096,7 +1164,7 @@ export function ResetPassword({ onDone }) {
         </h1>
 
         <p>
-          Choose a new password for your ONSTOOD
+          Choose a new password for your <OnstoodWordmark />
           account and get back to your student life.
         </p>
 
@@ -1104,7 +1172,7 @@ export function ResetPassword({ onDone }) {
 
           <span>Secure</span>
           <span>Simple</span>
-          <span>ONSTOOD</span>
+          <span><OnstoodWordmark /></span>
 
         </div>
 
@@ -1114,7 +1182,7 @@ export function ResetPassword({ onDone }) {
       <div className="auth-card">
 
         <div className="brand">
-          ONSTOOD<span>.</span>
+          <OnstoodWordmark /><span>.</span>
         </div>
 
         <p className="muted">
@@ -1206,6 +1274,20 @@ export function GoogleAccountType({
       .split(/\s+/)
       .filter(Boolean);
 
+  const [firstName, setFirstName] =
+    useState(
+      metadata.given_name ||
+      nameParts[0] ||
+      ''
+    );
+
+  const [lastName, setLastName] =
+    useState(
+      metadata.family_name ||
+      nameParts.slice(1).join(' ') ||
+      ''
+    );
+
   const [role, setRole] =
     useState(null);
 
@@ -1229,6 +1311,22 @@ export function GoogleAccountType({
     }
 
 
+    if (!firstName.trim()) {
+      setMessage(
+        'Please enter your first name.'
+      );
+      return;
+    }
+
+
+    if (!lastName.trim()) {
+      setMessage(
+        'Please enter your last name.'
+      );
+      return;
+    }
+
+
     if (
       role === 'employer' &&
       !companyName.trim()
@@ -1248,13 +1346,10 @@ export function GoogleAccountType({
       id: user.id,
       account_type: role,
       name:
-        nameParts[0] ||
-        metadata.given_name ||
-        'User',
+        firstName.trim(),
       surname:
-        nameParts.slice(1).join(' ') ||
-        metadata.family_name ||
-        '',
+        lastName.trim(),
+      social_name_edit_used: true,
       avatar_url:
         metadata.avatar_url ||
         metadata.picture ||
@@ -1314,19 +1409,112 @@ export function GoogleAccountType({
       <div className="auth-card card">
 
         <span className="eyebrow dark">
-          WELCOME TO ONSTOOD
+          WELCOME TO <OnstoodWordmark />
         </span>
 
         <h1>
-          Choose your account type
+          Complete your account
         </h1>
 
         <p className="muted">
-          You only choose this once.
-          ONSTOOD will use it to open the
-          right workspace whenever you sign
-          in with Google.
+          Before entering <OnstoodWordmark />, confirm the
+          name that will identify you on the platform.
         </p>
+
+        <div
+          style={{
+            marginTop: 16,
+            padding: 14,
+            borderRadius: 14,
+            background: 'rgba(220,38,38,.06)',
+            border: '1px solid rgba(220,38,38,.16)'
+          }}
+        >
+          <b style={{ color: '#b91c1c' }}>
+            Important
+          </b>
+
+          <div
+            style={{
+              marginTop: 5,
+              fontSize: 13,
+              lineHeight: 1.45,
+              color: '#475569'
+            }}
+          >
+            Your first name and last name can be saved only once.
+            After you press Save, these two fields cannot be changed.
+          </div>
+        </div>
+
+        <div
+          className="grid2"
+          style={{
+            marginTop: 14,
+            alignItems: 'start'
+          }}
+        >
+          <label
+            style={{
+              minWidth: 0,
+              width: '100%'
+            }}
+          >
+            First name
+
+            <input
+              name="google-first-name"
+              autoComplete="given-name"
+              value={firstName}
+              onChange={event =>
+                setFirstName(
+                  event.target.value
+                )
+              }
+              placeholder="First name"
+              style={{
+                width: '100%',
+                minWidth: 0,
+                boxSizing: 'border-box'
+              }}
+            />
+          </label>
+
+          <label
+            style={{
+              minWidth: 0,
+              width: '100%'
+            }}
+          >
+            Last name
+
+            <input
+              name="google-last-name"
+              autoComplete="family-name"
+              value={lastName}
+              onChange={event =>
+                setLastName(
+                  event.target.value
+                )
+              }
+              placeholder="Last name"
+              style={{
+                width: '100%',
+                minWidth: 0,
+                boxSizing: 'border-box'
+              }}
+            />
+          </label>
+        </div>
+
+        <div
+          style={{
+            marginTop: 18,
+            fontWeight: 800
+          }}
+        >
+          Account type
+        </div>
 
 
         <div
@@ -1453,6 +1641,8 @@ export function GoogleAccountType({
           className="btn primary full"
           disabled={
             !role ||
+            !firstName.trim() ||
+            !lastName.trim() ||
             busy
           }
           onClick={finish}
@@ -1462,13 +1652,11 @@ export function GoogleAccountType({
         >
           {
             busy
-              ? 'Creating account…'
+              ? 'Saving…'
               : (
-                role === 'employer'
-                  ? 'Continue as Employer'
-                  : role === 'student'
-                    ? 'Continue as Student'
-                    : 'Choose Student or Employer'
+                role
+                  ? 'Save and continue'
+                  : 'Choose Student or Employer'
               )
           }
         </button>

@@ -1,9 +1,54 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { supabase } from '../../lib/supabase';
 import Avatar from '../Avatar';
 import PhotoViewer from '../PhotoViewer';
 import { Page } from '../ui';
 import { ProfileContentTabs } from './ProfileContent';
+
+
+function createBrowserSafeId() {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.getRandomValues === 'function'
+    ) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+      const hex = Array.from(
+        bytes,
+        byte => byte.toString(16).padStart(2, '0')
+      );
+
+      return [
+        hex.slice(0, 4).join(''),
+        hex.slice(4, 6).join(''),
+        hex.slice(6, 8).join(''),
+        hex.slice(8, 10).join(''),
+        hex.slice(10, 16).join('')
+      ].join('-');
+    }
+  } catch {
+    // Fall through to a non-cryptographic compatibility id.
+  }
+
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
+}
+
 
 export function MyProfile({
   profile,
@@ -206,39 +251,6 @@ export function ProfileEditor({
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(null);
 
-  const [socialProvider, setSocialProvider] = useState(null);
-  const [canEditSocialName, setCanEditSocialName] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadIdentityMode() {
-      const { data } = await supabase.auth.getUser();
-      if (!active) return;
-
-      const providers = (data?.user?.identities || [])
-        .map(identity => identity?.provider)
-        .filter(Boolean);
-
-      const provider =
-        providers.find(item => item === 'google' || item === 'apple') || null;
-
-      setSocialProvider(provider);
-      setCanEditSocialName(
-        Boolean(provider) &&
-        !Boolean(profile?.social_name_edit_used)
-      );
-    }
-
-    loadIdentityMode();
-
-    return () => {
-      active = false;
-    };
-  }, [profile?.id, profile?.social_name_edit_used]);
-
-
-
   useEffect(() => {
 
     setForm({
@@ -381,7 +393,7 @@ export function ProfileEditor({
 
 
     const filePath =
-      `${userId}/${crypto.randomUUID()}.${extension}`;
+      `${userId}/${createBrowserSafeId()}.${extension}`;
 
 
     const {
@@ -458,17 +470,11 @@ export function ProfileEditor({
       const payload = {
 
         name:
-          canEditSocialName
-            ? (form.name || '').trim()
-            : profile.name || '',
+          profile.name || '',
         surname:
-          canEditSocialName
-            ? (form.surname || '').trim()
-            : profile.surname || '',
+          profile.surname || '',
         social_name_edit_used:
-          canEditSocialName
-            ? true
-            : Boolean(profile.social_name_edit_used),
+          Boolean(profile.social_name_edit_used),
         university:
           isEmployer
             ? ''
@@ -714,33 +720,21 @@ export function ProfileEditor({
             First name
 
             <input
-              value={
-                canEditSocialName
-                  ? form.name || ''
-                  : profile.name || ''
-              }
-              onChange={
-                canEditSocialName
-                  ? event =>
-                      updateField(
-                        'name',
-                        event.target.value
-                      )
-                  : undefined
-              }
-              readOnly={!canEditSocialName}
-              disabled={!canEditSocialName}
-              title={
-                canEditSocialName
-                  ? 'You may correct your name once because this account was created with Google or Apple.'
-                  : 'Name is fixed after account setup.'
-              }
+              value={profile.name || ''}
+              readOnly
+              disabled
+              title="First name is fixed after account setup."
+              style={{
+                background: '#f1f5f9',
+                color: '#64748b',
+                borderColor: '#dbe3ec',
+                cursor: 'not-allowed',
+                opacity: .9
+              }}
             />
 
             <small className="muted">
-              {canEditSocialName
-                ? `Imported from ${socialProvider === 'apple' ? 'Apple' : 'Google'} · you can correct it once.`
-                : 'Fixed after account setup.'}
+              Fixed identity field · cannot be changed.
             </small>
           </label>
 
@@ -749,33 +743,21 @@ export function ProfileEditor({
             Last name
 
             <input
-              value={
-                canEditSocialName
-                  ? form.surname || ''
-                  : profile.surname || ''
-              }
-              onChange={
-                canEditSocialName
-                  ? event =>
-                      updateField(
-                        'surname',
-                        event.target.value
-                      )
-                  : undefined
-              }
-              readOnly={!canEditSocialName}
-              disabled={!canEditSocialName}
-              title={
-                canEditSocialName
-                  ? 'You may correct your surname once because this account was created with Google or Apple.'
-                  : 'Surname is fixed after account setup.'
-              }
+              value={profile.surname || ''}
+              readOnly
+              disabled
+              title="Last name is fixed after account setup."
+              style={{
+                background: '#f1f5f9',
+                color: '#64748b',
+                borderColor: '#dbe3ec',
+                cursor: 'not-allowed',
+                opacity: .9
+              }}
             />
 
             <small className="muted">
-              {canEditSocialName
-                ? 'Save once to confirm your preferred name.'
-                : 'Fixed after account setup.'}
+              Fixed identity field · cannot be changed.
             </small>
           </label>
 

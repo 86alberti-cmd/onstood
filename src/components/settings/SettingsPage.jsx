@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { Bell, BriefcaseBusiness, Database, Globe2, LockKeyhole, MessageCircle, Monitor, ShieldCheck, Sparkles, Trash2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
@@ -345,7 +346,7 @@ export function AdminMfaGate({
 
           <div className="notice">
             Set up an authenticator app before
-            opening ONSTOOD Admin Control Center.
+            opening <OnstoodWordmark /> Admin Control Center.
             You can use Google Authenticator,
             Authy, 1Password or another TOTP app.
           </div>
@@ -601,6 +602,12 @@ export default function SettingsPage({
   const [deleteNeedsPassword, setDeleteNeedsPassword] =
     useState(true);
 
+  const [deleteSocialProvider, setDeleteSocialProvider] =
+    useState(null);
+
+  const [deleteSocialVerified, setDeleteSocialVerified] =
+    useState(false);
+
 
   const [feedbackForm, setFeedbackForm] =
     useState({
@@ -662,17 +669,60 @@ export default function SettingsPage({
         return;
       }
 
+      const user =
+        data?.user;
+
       const identities =
-        data?.user?.identities || [];
+        user?.identities || [];
+
+      const providers =
+        identities
+          .map(
+            identity =>
+              identity?.provider
+          )
+          .filter(Boolean);
 
       const hasEmailPasswordIdentity =
-        identities.some(
-          identity =>
-            identity?.provider === 'email'
+        providers.includes('email');
+
+      const socialProvider =
+        providers.includes('google')
+          ? 'google'
+          : providers.includes('apple')
+            ? 'apple'
+            : null;
+
+      const lastSignInMs =
+        Date.parse(
+          String(
+            user?.last_sign_in_at ||
+            ''
+          )
         );
+
+      const isFreshSocialLogin =
+        Boolean(socialProvider) &&
+        Number.isFinite(lastSignInMs) &&
+        (
+          Date.now() -
+          lastSignInMs
+        ) <= 5 * 60 * 1000;
 
       setDeleteNeedsPassword(
         hasEmailPasswordIdentity
+      );
+
+      setDeleteSocialProvider(
+        hasEmailPasswordIdentity
+          ? null
+          : socialProvider
+      );
+
+      setDeleteSocialVerified(
+        hasEmailPasswordIdentity
+          ? false
+          : isFreshSocialLogin
       );
 
     }
@@ -803,6 +853,62 @@ export default function SettingsPage({
   }
 
 
+  async function verifySocialForDelete() {
+
+    if (!deleteSocialProvider) {
+      notify(
+        'No supported social sign-in provider was found.'
+      );
+      return;
+    }
+
+    const providerLabel =
+      deleteSocialProvider === 'apple'
+        ? 'Apple'
+        : 'Google';
+
+    try {
+
+      sessionStorage.setItem(
+        'onstood_delete_reauth',
+        deleteSocialProvider
+      );
+
+    } catch {
+      // Continue even if sessionStorage is unavailable.
+    }
+
+    const queryParams =
+      deleteSocialProvider === 'google'
+        ? {
+            prompt: 'select_account'
+          }
+        : {
+            prompt: 'login'
+          };
+
+    const {
+      error
+    } = await supabase.auth
+      .signInWithOAuth({
+        provider:
+          deleteSocialProvider,
+        options: {
+          redirectTo:
+            window.location.href,
+          queryParams
+        }
+      });
+
+    if (error) {
+      notify(
+        `${providerLabel} verification could not start: ${error.message}`
+      );
+    }
+
+  }
+
+
   async function deleteAccount() {
 
     if (
@@ -811,6 +917,21 @@ export default function SettingsPage({
     ) {
       notify(
         'Enter your current password.'
+      );
+      return;
+    }
+
+    if (
+      !deleteNeedsPassword &&
+      deleteSocialProvider &&
+      !deleteSocialVerified
+    ) {
+      notify(
+        `Verify with ${
+          deleteSocialProvider === 'apple'
+            ? 'Apple'
+            : 'Google'
+        } before deleting your account.`
       );
       return;
     }
@@ -1312,7 +1433,7 @@ export default function SettingsPage({
                 Appearance & Accessibility
               </h3>
               <small className="muted">
-                Personalize ONSTOOD
+                Personalize <OnstoodWordmark />
               </small>
             </div>
             <Monitor size={19} />
@@ -1516,7 +1637,7 @@ export default function SettingsPage({
               <div className="card-head">
                 <div>
                   <h3>
-                    ONSTOOD AI Preferences
+                    <OnstoodWordmark /> AI Preferences
                   </h3>
                   <small className="muted">
                     How AI should assist you
@@ -1665,7 +1786,7 @@ export default function SettingsPage({
           >
 
             <b>
-              ONSTOOD learns with you.
+              <OnstoodWordmark /> learns with you.
             </b>
 
             <p
@@ -1873,7 +1994,7 @@ export default function SettingsPage({
 
           <p className="muted">
             Deleting your account permanently
-            removes your ONSTOOD authentication
+            removes your <OnstoodWordmark /> authentication
             account. This action cannot be undone.
           </p>
 
@@ -1939,7 +2060,27 @@ export default function SettingsPage({
             <p className="muted">
               {deleteNeedsPassword
                 ? 'Enter your current password to permanently delete your account.'
-                : 'Confirm below to permanently remove this account. Your active Google session is used for verification.'}
+                : (
+                  deleteSocialProvider
+                    ? (
+                      deleteSocialVerified
+                        ? `${
+                            deleteSocialProvider === 'apple'
+                              ? 'Apple'
+                              : 'Google'
+                          } identity verified. You can now permanently delete this account.`
+                        : `For security, verify again with ${
+                            deleteSocialProvider === 'apple'
+                              ? 'Apple'
+                              : 'Google'
+                          } before permanently deleting this account. ONSTOOD never asks for your ${
+                            deleteSocialProvider === 'apple'
+                              ? 'Apple ID'
+                              : 'Google'
+                          } password.`
+                    )
+                    : 'A supported sign-in identity is required before this account can be deleted.'
+                )}
             </p>
 
             {deleteNeedsPassword && (
@@ -1956,6 +2097,31 @@ export default function SettingsPage({
                   )
                 }
               />
+
+            )}
+
+            {!deleteNeedsPassword &&
+              deleteSocialProvider &&
+              !deleteSocialVerified && (
+
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={
+                  verifySocialForDelete
+                }
+                style={{
+                  width: '100%',
+                  marginTop: 12,
+                  fontWeight: 850
+                }}
+              >
+                Verify with {
+                  deleteSocialProvider === 'apple'
+                    ? 'Apple'
+                    : 'Google'
+                }
+              </button>
 
             )}
 
@@ -1987,6 +2153,13 @@ export default function SettingsPage({
                   (
                     deleteNeedsPassword &&
                     !deletePassword
+                  ) ||
+                  (
+                    !deleteNeedsPassword &&
+                    Boolean(
+                      deleteSocialProvider
+                    ) &&
+                    !deleteSocialVerified
                   )
                 }
                 onClick={deleteAccount}

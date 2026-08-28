@@ -10,12 +10,12 @@ import {
   Mail,
   Plus,
   Settings,
-  Shield,
   Sparkles,
   Users,
   X
 } from 'lucide-react';
 import Avatar from './Avatar';
+import OnstoodWordmark from './OnstoodWordmark';
 
 export default function AppNavigation({
   profile,
@@ -27,7 +27,8 @@ export default function AppNavigation({
   onNavigate,
   onMobileNavigate,
   onProfile,
-  onLogout
+  onLogout,
+  showAdmin = false
 }) {
   return (
     <>
@@ -148,7 +149,13 @@ export default function AppNavigation({
                   </span>
 
                   <span>
-                    {label}
+                    {id === 'ai'
+                      ? (
+                          <>
+                            <OnstoodWordmark /> AI
+                          </>
+                        )
+                      : label}
                   </span>
 
                   {id === 'ai' && (
@@ -292,17 +299,22 @@ export default function AppNavigation({
                   BriefcaseBusiness,
                   'Career'
                 ],
-                ...(activeNav.some(([id]) => id === 'admin')
-                  ? [[
-                      'admin',
-                      Shield,
-                      'Admin'
-                    ]]
-                  : []),
                 [
                   'settings',
                   Settings,
                   'Settings'
+                ],
+                ...(showAdmin
+                  ? [[
+                      'admin',
+                      Settings,
+                      'Admin'
+                    ]]
+                  : []),
+                [
+                  'logout',
+                  LogOut,
+                  'Sign out'
                 ]
               ].map(
                 ([key, Icon, label]) => (
@@ -310,6 +322,12 @@ export default function AppNavigation({
                     key={key}
                     type="button"
                     onClick={() => {
+                      if (key === 'logout') {
+                        onSetMobileMoreOpen(false);
+                        onLogout();
+                        return;
+                      }
+
                       onMobileNavigate(
                         key
                       );

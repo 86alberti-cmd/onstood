@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import {
   FileText,
   Heart,
@@ -10,6 +11,161 @@ import {
 } from 'lucide-react';
 import Avatar from '../Avatar';
 import { fmtDate } from '../../utils/formatters';
+
+
+function timelineDocumentKind(item) {
+  const mime = String(item?.mime_type || '').toLowerCase();
+  const name = String(item?.caption || '').toLowerCase();
+
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name)) {
+    return 'image';
+  }
+
+  if (mime === 'application/pdf' || /\.pdf$/i.test(name)) {
+    return 'pdf';
+  }
+
+  return 'document';
+}
+
+function TimelineDocumentPreview({ item }) {
+  const kind = timelineDocumentKind(item);
+
+  if (kind === 'image') {
+    return (
+      <div className="onstood-document-preview-card" style={{ overflow: 'hidden' }}>
+        <a href={item.signed_url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+          <img
+            src={item.signed_url}
+            alt={item.caption || 'Attached image'}
+            loading="lazy"
+            style={{
+              display: 'block',
+              width: '100%',
+              maxHeight: 420,
+              objectFit: 'contain',
+              background: '#f8fafc'
+            }}
+          />
+        </a>
+        <div className="onstood-document-preview-footer">
+          <strong>{item.caption || 'Attached image'}</strong>
+          <a
+            href={item.signed_url}
+            target="_blank"
+            rel="noreferrer"
+            className="btn subtle"
+            style={{ textDecoration: 'none' }}
+          >
+            Open
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === 'pdf') {
+    return (
+      <div className="onstood-document-preview-card" style={{ overflow: 'hidden' }}>
+        <iframe
+          src={`${item.signed_url}#toolbar=0&navpanes=0&view=FitH`}
+          title={item.caption || 'PDF preview'}
+          loading="lazy"
+          style={{
+            width: '100%',
+            height: 360,
+            border: 0,
+            display: 'block',
+            background: '#f8fafc'
+          }}
+        />
+        <div className="onstood-document-preview-footer">
+          <div style={{ minWidth: 0 }}>
+            <strong
+              style={{
+                display: 'block',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {item.caption || 'PDF document'}
+            </strong>
+            <small className="muted">PDF</small>
+          </div>
+          <a
+            href={item.signed_url}
+            target="_blank"
+            rel="noreferrer"
+            className="btn subtle"
+            style={{ textDecoration: 'none' }}
+          >
+            Open
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={item.signed_url}
+      target="_blank"
+      rel="noreferrer"
+      className="onstood-document-preview-card"
+      style={{
+        textDecoration: 'none',
+        color: 'inherit',
+        padding: 13,
+        display: 'grid',
+        gridTemplateColumns: '48px minmax(0,1fr) auto',
+        gap: 11,
+        alignItems: 'center'
+      }}
+    >
+      <div
+        aria-hidden="true"
+        style={{
+          width: 48,
+          height: 58,
+          borderRadius: 10,
+          background: 'linear-gradient(180deg,#eff6ff,#e0e7ff)',
+          border: '1px solid rgba(37,99,235,.14)',
+          display: 'grid',
+          placeItems: 'center',
+          color: '#1d4ed8',
+          fontSize: 12,
+          fontWeight: 900
+        }}
+      >
+        DOC
+      </div>
+
+      <div style={{ minWidth: 0 }}>
+        <strong
+          style={{
+            display: 'block',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {item.caption || 'Attached document'}
+        </strong>
+        <small className="muted" style={{ display: 'block', marginTop: 3 }}>
+          {item.mime_type
+            ? String(item.mime_type).split('/').pop()?.toUpperCase()
+            : 'DOCUMENT'}
+        </small>
+        <small className="muted" style={{ display: 'block', marginTop: 3 }}>
+          Tap to open full document
+        </small>
+      </div>
+
+      <span className="btn subtle">Open</span>
+    </a>
+  );
+}
 
 export default function Post({
   post,
@@ -37,6 +193,9 @@ export default function Post({
     useState(null);
 
   const [commentsOpen, setCommentsOpen] =
+    useState(false);
+
+  const [deleteConfirmOpen, setDeleteConfirmOpen] =
     useState(false);
 
   const media =
@@ -152,8 +311,11 @@ export default function Post({
             <button
               type="button"
               className="icon-btn"
-              onClick={onDelete}
+              onClick={() =>
+                setDeleteConfirmOpen(true)
+              }
               title="Delete post"
+              aria-label="Delete post"
             >
               <Trash2 size={15} />
             </button>
@@ -276,40 +438,10 @@ export default function Post({
           }}
         >
           {documents.map(item => (
-            <a
+            <TimelineDocumentPreview
               key={item.id}
-              href={item.signed_url}
-              target="_blank"
-              rel="noreferrer"
-              className="btn subtle"
-              style={{
-                justifyContent:
-                  'flex-start',
-                textDecoration:
-                  'none',
-                minHeight: 42,
-                padding: '8px 11px'
-              }}
-              title={
-                item.caption ||
-                'Open document'
-              }
-            >
-              <FileText size={16} />
-              <span
-                style={{
-                  overflow:
-                    'hidden',
-                  textOverflow:
-                    'ellipsis',
-                  whiteSpace:
-                    'nowrap'
-                }}
-              >
-                {item.caption ||
-                  'Attached document'}
-              </span>
-            </a>
+              item={item}
+            />
           ))}
         </div>
       )}
@@ -607,6 +739,98 @@ export default function Post({
           </button>
         </div>
 
+        </div>
+      )}
+
+      {deleteConfirmOpen && (
+        <div
+          role="presentation"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) {
+              setDeleteConfirmOpen(false);
+            }
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 100000,
+            background: 'rgba(15, 23, 42, .42)',
+            display: 'grid',
+            placeItems: 'center',
+            padding: 18
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`delete-post-title-${post.id}`}
+            className="card"
+            style={{
+              width: 'min(420px, calc(100vw - 28px))',
+              padding: 20,
+              borderRadius: 18,
+              boxShadow: '0 20px 60px rgba(15,23,42,.24)'
+            }}
+          >
+            <h3
+              id={`delete-post-title-${post.id}`}
+              style={{
+                margin: 0,
+                fontSize: 20
+              }}
+            >
+              Delete this post?
+            </h3>
+
+            <p
+              style={{
+                margin: '9px 0 18px',
+                color: '#64748b',
+                lineHeight: 1.45
+              }}
+            >
+              Are you sure you want to delete this post? This action cannot be undone.
+            </p>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 10,
+                flexWrap: 'wrap'
+              }}
+            >
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() =>
+                  setDeleteConfirmOpen(false)
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmOpen(false);
+                  onDelete?.();
+                }}
+                style={{
+                  border: '1px solid rgba(220,38,38,.22)',
+                  background: '#fff',
+                  color: '#dc2626',
+                  borderRadius: 10,
+                  minHeight: 40,
+                  padding: '0 15px',
+                  fontWeight: 900,
+                  cursor: 'pointer'
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

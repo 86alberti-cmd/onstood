@@ -1,8 +1,53 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { Activity, BookOpen, CalendarDays, CheckCircle2, ChevronRight, FileText, Plus, Search, Send, Upload, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtDate } from '../../utils/formatters';
 import { CourseTypeBadge, Page } from '../ui';
+
+
+function createBrowserSafeId() {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.getRandomValues === 'function'
+    ) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+      const hex = Array.from(
+        bytes,
+        byte => byte.toString(16).padStart(2, '0')
+      );
+
+      return [
+        hex.slice(0, 4).join(''),
+        hex.slice(4, 6).join(''),
+        hex.slice(6, 8).join(''),
+        hex.slice(8, 10).join(''),
+        hex.slice(10, 16).join('')
+      ].join('-');
+    }
+  } catch {
+    // Fall through to a non-cryptographic compatibility id.
+  }
+
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
+}
+
 
 export default function Courses({
   profile,
@@ -637,7 +682,7 @@ export default function Courses({
 
 
     const generatedRoomCode =
-      `ONSTOOD-${selectedCourse.id.slice(0, 8)}-${crypto.randomUUID().slice(0, 8)}`;
+      `ONSTOOD-${selectedCourse.id.slice(0, 8)}-${createBrowserSafeId().slice(0, 8)}`;
 
 
     const roomUrl =
@@ -1162,7 +1207,7 @@ export default function Courses({
         lessonForm.file.type;
 
       storagePath =
-        `${selectedCourse.id}/${crypto.randomUUID()}-${fileName}`;
+        `${selectedCourse.id}/${createBrowserSafeId()}-${fileName}`;
 
       const {
         error: uploadError
@@ -2081,7 +2126,7 @@ export default function Courses({
                         lineHeight: 1.5
                       }}
                     >
-                      If no production room URL is supplied, ONSTOOD creates a temporary Jitsi test room automatically for development.
+                      If no production room URL is supplied, <OnstoodWordmark /> creates a temporary Jitsi test room automatically for development.
                     </div>
 
                     <button
@@ -2112,7 +2157,7 @@ export default function Courses({
                     </h3>
 
                     <p className="muted">
-                      Join scheduled sessions from your course workspace. ONSTOOD records your classroom participation when you enter a session, while the video provider runs the live call.
+                      Join scheduled sessions from your course workspace. <OnstoodWordmark /> records your classroom participation when you enter a session, while the video provider runs the live call.
                     </p>
 
                   </div>
@@ -2348,7 +2393,7 @@ export default function Courses({
                         marginTop: 12
                       }}
                     >
-                      Camera, microphone and screen sharing are handled by the active video room. ONSTOOD stores the classroom interaction and attendance layer.
+                      Camera, microphone and screen sharing are handled by the active video room. <OnstoodWordmark /> stores the classroom interaction and attendance layer.
                     </small>
 
                   </div>
@@ -2919,7 +2964,7 @@ export default function Courses({
       >
 
         <span className="eyebrow">
-          ONSTOOD LEARNING
+          <OnstoodWordmark /> LEARNING
         </span>
 
         <h2

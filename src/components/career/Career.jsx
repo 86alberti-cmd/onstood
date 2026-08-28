@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { BriefcaseBusiness, ChevronRight, FileText, Plus, Search, Users } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtDate } from '../../utils/formatters';
@@ -924,7 +925,7 @@ export default function Career({
               No opportunities published yet.
             </h3>
             <p>
-              Publish your first role to start recruiting through ONSTOOD.
+              Publish your first role to start recruiting through <OnstoodWordmark />.
             </p>
           </div>
 
@@ -1173,7 +1174,7 @@ export default function Career({
 
         <div>
           <span className="eyebrow">
-            ONSTOOD CAREER
+            <OnstoodWordmark /> CAREER
           </span>
 
           <h2>
@@ -1181,7 +1182,7 @@ export default function Career({
           </h2>
 
           <p>
-            Discover internships, graduate roles, projects, scholarships and student-friendly work from employers recruiting through ONSTOOD.
+            Discover internships, graduate roles, projects, scholarships and student-friendly work from employers recruiting through <OnstoodWordmark />.
           </p>
         </div>
 
@@ -1430,7 +1431,7 @@ export default function Career({
                       setCoverNote('');
                     }}
                   >
-                    Apply with ONSTOOD
+                    Apply with <OnstoodWordmark />
                     <ChevronRight
                       size={15}
                     />

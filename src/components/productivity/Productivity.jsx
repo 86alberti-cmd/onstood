@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import OnstoodWordmark from '../OnstoodWordmark';
 import { Check, FileText, Plus, Trash2, Upload, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { fmtDate, safeDate, safeDay, safeMonth } from '../../utils/formatters';
@@ -517,13 +518,16 @@ export function Tasks({
     if (!title.trim()) return;
 
     const {
+      data,
       error
     } = await supabase
       .from('tasks')
       .insert({
         user_id: profile.id,
         title: title.trim()
-      });
+      })
+      .select()
+      .single();
 
     if (error) {
       notify(error.message);
@@ -532,7 +536,24 @@ export function Tasks({
 
     setTitle('');
 
-    window.location.reload();
+    if (data) {
+      setTasks(current =>
+        [...current, data].sort((a, b) => {
+          if (Boolean(a.done) !== Boolean(b.done)) {
+            return Number(a.done) - Number(b.done);
+          }
+
+          const aDue = a.due_at
+            ? new Date(a.due_at).getTime()
+            : Number.POSITIVE_INFINITY;
+          const bDue = b.due_at
+            ? new Date(b.due_at).getTime()
+            : Number.POSITIVE_INFINITY;
+
+          return aDue - bDue;
+        })
+      );
+    }
   }
 
 
@@ -673,6 +694,47 @@ export function Tasks({
   );
 }
 
+function createBrowserSafeId() {
+  const cryptoApi =
+    typeof globalThis !== 'undefined'
+      ? globalThis.crypto
+      : null;
+
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+
+    // RFC 4122 version 4 UUID bits.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = Array.from(
+      bytes,
+      byte => byte.toString(16).padStart(2, '0')
+    );
+
+    return [
+      hex.slice(0, 4).join(''),
+      hex.slice(4, 6).join(''),
+      hex.slice(6, 8).join(''),
+      hex.slice(8, 10).join(''),
+      hex.slice(10, 16).join('')
+    ].join('-');
+  }
+
+  // Last-resort uniqueness fallback for older/non-secure mobile contexts.
+  return [
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2),
+    Math.random().toString(36).slice(2)
+  ].join('-');
+}
+
+
 export function Documents({
   profile,
   notify
@@ -683,7 +745,7 @@ export function Documents({
   const [busy, setBusy] = useState(false);
   const [pendingFile, setPendingFile] = useState(null);
   const [uploadVisibility, setUploadVisibility] = useState('');
-  const [uploadKnowledgeConsent, setUploadKnowledgeConsent] = useState(false);
+  const [uploadKnowledgeConsent, setUploadKnowledgeConsent] = useState(true);
   const [rightsAccepted, setRightsAccepted] = useState(false);
   const [rightsModalOpen, setRightsModalOpen] = useState(false);
   const [rightsConfirmChecked, setRightsConfirmChecked] = useState(false);
@@ -882,6 +944,8 @@ export function Documents({
     }
 
     // Do not upload yet. The user must explicitly choose visibility first.
+    // ONSTOOD Knowledge starts checked in the privacy dialog.
+    setUploadKnowledgeConsent(true);
     setPendingFile(file);
     setUploadVisibility('');
   }
@@ -890,7 +954,7 @@ export function Documents({
   function cancelPendingUpload() {
     setPendingFile(null);
     setUploadVisibility('');
-    setUploadKnowledgeConsent(false);
+    setUploadKnowledgeConsent(true);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -912,12 +976,21 @@ export function Documents({
 
     try {
 
-      const safeName =
-        String(file.name || 'document')
-          .replace(/[\\/]/g, '-');
+      const originalName =
+        String(file.name || 'document');
 
+      const extensionMatch =
+        originalName.match(/\.([A-Za-z0-9]{1,12})$/);
+
+      const safeExtension =
+        extensionMatch
+          ? `.${extensionMatch[1].toLowerCase()}`
+          : '';
+
+      // Keep the Storage object key strictly URL/storage-safe.
+      // The real/original filename is preserved separately in documents.file_name.
       uploadedPath =
-        `${profile.id}/${crypto.randomUUID()}-${safeName}`;
+        `${profile.id}/${createBrowserSafeId()}${safeExtension}`;
 
       const {
         error: uploadError
@@ -968,35 +1041,32 @@ export function Documents({
         ...current
       ].filter(Boolean));
 
-      if (uploadKnowledgeConsent) {
-        const {
-          data: knowledgeData,
-          error: knowledgeError
-        } = await supabase.functions.invoke(
-          'onstood-knowledge-ingest',
-          {
-            body: {
-              document_id: data.id,
-              action: 'ingest'
-            }
+      const {
+        data: processData,
+        error: processError
+      } = await supabase.functions.invoke(
+        'onstood-document-process',
+        {
+          body: {
+            document_id: data.id
           }
-        );
-
-        if (knowledgeError || knowledgeData?.error) {
-          notify(
-            `Document uploaded. ONSTOOD Knowledge indexing: ${
-              knowledgeData?.error ||
-              knowledgeError?.message ||
-              'not available yet'
-            }`
-          );
-        } else {
-          notify(
-            'Document uploaded and added to ONSTOOD Knowledge.'
-          );
         }
+      );
+
+      if (processError || processData?.error) {
+        notify(
+          `Document uploaded, but processing could not start: ${
+            processData?.error ||
+            processError?.message ||
+            'unknown error'
+          }`
+        );
       } else {
-        notify('Document uploaded.');
+        notify(
+          uploadKnowledgeConsent
+            ? 'Document uploaded. Processing started; when ready, it will be contributed to ONSTOOD Knowledge.'
+            : 'Document uploaded. Processing started in the background.'
+        );
       }
 
       cancelPendingUpload();
@@ -1024,7 +1094,6 @@ export function Documents({
       setBusy(false);
     }
   }
-
   async function openDocument(item) {
 
     const path =
@@ -1277,32 +1346,45 @@ export function Documents({
 
       action={
 
-        <label
-          className="btn primary upload-btn"
-          style={{
-            cursor:
-              busy
-                ? 'default'
-                : 'pointer'
-          }}
-        >
+        <>
+          <button
+            type="button"
+            className="btn primary upload-btn"
+            disabled={busy}
+            onClick={() => {
+              const input =
+                fileInputRef.current;
 
-          <Upload size={16} />
+              if (!input) return;
 
-          {busy
-            ? 'Uploading…'
-            : 'Upload document'}
+              // Reset first so mobile browsers also fire change when the same file is selected again.
+              input.value = '';
+              input.click();
+            }}
+            style={{
+              cursor:
+                busy
+                  ? 'default'
+                  : 'pointer'
+            }}
+          >
 
+            <Upload size={16} />
+
+            {busy
+              ? 'Uploading…'
+              : 'Upload document'}
+
+          </button>
 
           <input
             ref={fileInputRef}
             type="file"
             onChange={chooseDocument}
-            hidden
+            style={{ display: 'none' }}
             disabled={busy}
           />
-
-        </label>
+        </>
 
       }
     >
@@ -1338,7 +1420,7 @@ export function Documents({
               className="muted"
               style={{ fontWeight: 900 }}
             >
-              ONSTOOD KNOWLEDGE · CONTENT RIGHTS
+              <OnstoodWordmark /> KNOWLEDGE · CONTENT RIGHTS
             </small>
 
             <h3 style={{ margin: '6px 0 8px' }}>
@@ -1350,7 +1432,7 @@ export function Documents({
               style={{ lineHeight: 1.55 }}
             >
               Only contribute documents you own or have permission
-              or legal rights to share through ONSTOOD Knowledge.
+              or legal rights to share through <OnstoodWordmark /> Knowledge.
             </p>
 
             <label
@@ -1402,7 +1484,7 @@ export function Documents({
                 lineHeight: 1.45
               }}
             >
-              For answer generation, ONSTOOD may send only small,
+              For answer generation, <OnstoodWordmark /> may send only small,
               relevant, privacy-filtered excerpts to its AI processing
               provider. Original files are not sent as a knowledge
               base and are not authorized for external AI
@@ -1453,22 +1535,52 @@ export function Documents({
         </h3>
 
         <p>
-          Choose who can open each file: Only me, Connections, or Public. ONSTOOD Knowledge is a separate permission, so even a private file can contribute useful study knowledge without changing its visibility.
+          Choose who can open each file: Only me, Connections, or Public. <OnstoodWordmark /> Knowledge is a separate permission, so even a private file can contribute useful study knowledge without changing its visibility.
         </p>
 
       </div>
 
+
+      <style>{`
+        @media (max-width: 767px) {
+          .onstood-doc-privacy-card {
+            border-radius: 16px !important;
+            margin-top: 8px !important;
+          }
+          .onstood-doc-privacy-card label,
+          .onstood-doc-privacy-card p,
+          .onstood-doc-privacy-card span {
+            overflow-wrap: anywhere;
+          }
+          .onstood-doc-privacy-card .btn {
+            width: 100%;
+          }
+          .onstood-doc-privacy-card h3 {
+            font-size: clamp(18px, 5vw, 22px);
+            line-height: 1.2;
+          }
+          .onstood-doc-privacy-card p,
+          .onstood-doc-privacy-card label,
+          .onstood-doc-privacy-card small {
+            font-size: 13px;
+            line-height: 1.4;
+          }
+        }
+      `}</style>
 
       {pendingFile && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 3000,
+            zIndex: 100000,
             background: 'rgba(15,23,42,0.48)',
-            display: 'grid',
-            placeItems: 'center',
-            padding: 20
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            padding: 'max(12px, env(safe-area-inset-top)) 12px max(88px, calc(env(safe-area-inset-bottom) + 76px))'
           }}
           onMouseDown={event => {
             if (event.target === event.currentTarget && !busy) {
@@ -1477,10 +1589,13 @@ export function Documents({
           }}
         >
           <div
-            className="card"
+            className="card onstood-doc-privacy-card"
             style={{
-              width: 'min(520px, 100%)',
-              padding: 22,
+              width: 'min(520px, calc(100vw - 24px))',
+              maxHeight: 'calc(100dvh - 112px)',
+              overflowY: 'auto',
+              WebkitOverflowScrolling: 'touch',
+              padding: 'clamp(14px, 4vw, 22px)',
               boxShadow: '0 24px 70px rgba(15,23,42,0.28)'
             }}
           >
@@ -1583,9 +1698,9 @@ export function Documents({
                 style={{ marginTop: 2 }}
               />
               <span>
-                <b>Contribute to ONSTOOD Knowledge</b>
+                <b>Contribute to <OnstoodWordmark /> Knowledge</b>
                 <small className="muted" style={{ display: 'block', marginTop: 3, lineHeight: 1.45 }}>
-                  This is separate from visibility. ONSTOOD may use the study knowledge to help other students inside ONSTOOD. Personal identifiers are filtered and the material is not authorized for external AI training/indexing.
+                  This is separate from visibility. <OnstoodWordmark /> may use the study knowledge to help other students inside <OnstoodWordmark />. Personal identifiers are filtered and the material is not authorized for external AI training/indexing.
                 </small>
               </span>
             </label>
@@ -1606,6 +1721,8 @@ export function Documents({
                 onClick={upload}
                 disabled={busy || !uploadVisibility}
                 style={{
+                  minHeight: 44,
+                  flex: '1 1 180px',
                   opacity: busy || !uploadVisibility ? 0.55 : 1,
                   cursor: busy || !uploadVisibility ? 'not-allowed' : 'pointer'
                 }}
@@ -1775,7 +1892,7 @@ export function Documents({
                       );
                     }}
                   />
-                  ONSTOOD Knowledge
+                  <OnstoodWordmark /> Knowledge
                 </label>
 
 

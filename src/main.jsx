@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { OnstoodRichText } from './components/OnstoodRichText';
+import OnstoodWordmark from './components/OnstoodWordmark';
 import { supabase } from './lib/supabase';
 import {
   fmtDate,
@@ -42,7 +44,6 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
-  Copy,
   ChevronLeft,
   ChevronRight,
   CircleUserRound,
@@ -136,6 +137,15 @@ const ONSTOOD_SIDEBAR_TIPS = [
       'Ask questions and receive explanations in more than 50 languages. ONSTOOD AI follows the language you use so study support can feel natural wherever you are.',
     actionLabel: 'Open ONSTOOD AI',
     section: 'ai'
+  },
+  {
+    id: 'knowledge-growth',
+    eyebrow: 'DID YOU KNOW?',
+    title: 'Our academic knowledge keeps growing.',
+    text:
+      'ONSTOOD academic knowledge grows with licensed academic records and eligible study material contributed by students.',
+    actionLabel: 'Open Documents',
+    section: 'docs'
   }
 ];
 
@@ -339,7 +349,7 @@ class SectionErrorBoundary extends React.Component {
           </h3>
 
           <p>
-            ONSTOOD kept the rest of the application running.
+            <OnstoodWordmark /> kept the rest of the application running.
           </p>
 
           <small className="muted">
@@ -380,9 +390,73 @@ function App({ session }) {
   const [sidebarTipPaused, setSidebarTipPaused] =
     useState(false);
 
-  const sidebarTip =
+  const [knowledgeStats, setKnowledgeStats] =
+    useState({
+      academic_records: 0,
+      user_contributors: 0,
+      total_records: 0,
+      indexed: 0,
+      reference_only: 0
+    });
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadKnowledgeStats() {
+      const { data, error } =
+        await supabase.rpc(
+          'onstood_public_knowledge_stats'
+        );
+
+      if (!active || error || !data) {
+        return;
+      }
+
+      setKnowledgeStats({
+        academic_records:
+          Number(data.academic_records || 0),
+        user_contributors:
+          Number(data.user_contributors || 0),
+        total_records:
+          Number(data.total_records || 0),
+        indexed:
+          Number(data.indexed || 0),
+        reference_only:
+          Number(data.reference_only || 0)
+      });
+    }
+
+    loadKnowledgeStats();
+
+    const timer = window.setInterval(
+      loadKnowledgeStats,
+      60000
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const sidebarTipBase =
     ONSTOOD_SIDEBAR_TIPS[sidebarTipIndex] ||
     ONSTOOD_SIDEBAR_TIPS[0];
+
+  const sidebarTip =
+    sidebarTipBase?.id === 'knowledge-growth'
+      ? {
+          ...sidebarTipBase,
+          title:
+            knowledgeStats.total_records > 0
+              ? `${knowledgeStats.total_records.toLocaleString()} academic knowledge records and growing.`
+              : 'Our academic knowledge keeps growing.',
+          text:
+            knowledgeStats.total_records > 0
+              ? `ONSTOOD currently has ${knowledgeStats.total_records.toLocaleString()} academic knowledge records available to support your questions — and this number keeps growing as new eligible material is shared and processed.`
+              : 'ONSTOOD academic knowledge keeps growing as new eligible material is shared and processed.'
+        }
+      : sidebarTipBase;
 
   function moveSidebarTip(direction) {
     setSidebarTipExpanded(false);
@@ -1821,43 +1895,6 @@ function App({ session }) {
   }
 
 
-  async function copyGlobalSelection() {
-    const selectedText =
-      globalSelectionAction?.text;
-
-    if (!selectedText) return;
-
-    try {
-      await navigator.clipboard.writeText(
-        selectedText
-      );
-    } catch {
-      const temp =
-        document.createElement(
-          'textarea'
-        );
-
-      temp.value =
-        selectedText;
-
-      temp.style.position =
-        'fixed';
-
-      temp.style.opacity =
-        '0';
-
-      document.body.appendChild(
-        temp
-      );
-
-      temp.select();
-      document.execCommand('copy');
-      temp.remove();
-    }
-
-    setGlobalSelectionAction(null);
-    clearGlobalBrowserSelection();
-  }
 
 
   useEffect(() => {
@@ -2076,7 +2113,7 @@ function App({ session }) {
   if (loading) {
     return (
       <div className="loading">
-        Loading ONSTOOD…
+        Loading <OnstoodWordmark />…
       </div>
     );
   }
@@ -2106,7 +2143,7 @@ function App({ session }) {
         </button>
 
         <div className="brand">
-          ONSTOOD<span>.</span>
+          <OnstoodWordmark /><span>.</span>
         </div>
 
         <div
@@ -2150,7 +2187,7 @@ function App({ session }) {
             >
               {globalSearchBusy ? (
                 <div className="empty compact">
-                  Searching ONSTOOD…
+                  Searching <OnstoodWordmark />…
                 </div>
               ) : (
                 globalResults.map(item => (
@@ -2170,7 +2207,7 @@ function App({ session }) {
                       cursor: 'pointer'
                     }}
                   >
-                    <b>{item.title}</b>
+                    <b>{<OnstoodRichText>{item.title}</OnstoodRichText>}</b>
                     <small
                       className="muted"
                       style={{
@@ -2356,17 +2393,12 @@ function App({ session }) {
             setSection('profile')
           }
           onLogout={logout}
+          showAdmin={Boolean(adminRole)}
         />
 
 
 
         {/* MAIN */}
-
-        {adminRole && (
-          <button type="button" className="mobile-admin-fab" onClick={() => setSection('admin')} aria-label="Open Admin Control Center">
-            <ShieldCheck size={18}/><span>Admin</span>
-          </button>
-        )}
 
         <main className="content">
 
@@ -2647,7 +2679,7 @@ function App({ session }) {
                         color: '#6558ff'
                       }}
                     >
-                      ONSTOOD
+                      <OnstoodWordmark />
                     </small>
                     <b
                       style={{
@@ -2891,6 +2923,11 @@ function App({ session }) {
 
 
       <style>{`
+          .onstood-wordmark,
+          .onstood-wordmark * {
+            text-transform: none !important;
+          }
+
         @keyframes onstoodGlobalSelectionFlow {
           0% {
             transform: translateX(-125%);
@@ -2937,18 +2974,6 @@ function App({ session }) {
           box-shadow:
             0 16px 45px rgba(15,23,42,.18),
             inset 0 1px 0 rgba(255,255,255,.92);
-        }
-
-        .onstood-global-selection-copy {
-          width: 34px;
-          height: 34px;
-          border: 1px solid rgba(148,163,184,.28);
-          border-radius: 10px;
-          background: #fff;
-          color: #475569;
-          display: grid;
-          place-items: center;
-          cursor: pointer;
         }
 
         .onstood-global-selection-chip {
@@ -3053,7 +3078,290 @@ function App({ session }) {
           z-index: 4;
         }
 
-        @media (max-width: 720px) {
+        
+        /* =====================================================
+           ONSTOOD VISUAL POLISH PASS 1
+           Visual consistency only. No feature logic changes.
+           ===================================================== */
+
+        :root {
+          --onstood-radius-sm: 10px;
+          --onstood-radius-md: 14px;
+          --onstood-radius-lg: 18px;
+          --onstood-shadow-soft:
+            0 8px 24px rgba(15,23,42,.06);
+          --onstood-shadow-modal:
+            0 24px 70px rgba(15,23,42,.18);
+        }
+
+        .card {
+          border-radius:
+            var(--onstood-radius-md);
+        }
+
+        .btn {
+          min-height: 36px;
+          border-radius:
+            var(--onstood-radius-sm);
+          font-weight: 700;
+          transition:
+            transform .14s ease,
+            box-shadow .14s ease,
+            background-color .14s ease,
+            border-color .14s ease;
+        }
+
+        .btn.primary {
+          box-shadow:
+            0 5px 14px rgba(79,70,229,.15);
+        }
+
+        .icon-btn {
+          border-radius:
+            var(--onstood-radius-sm);
+          transition:
+            transform .14s ease,
+            background-color .14s ease;
+        }
+
+        .btn:active,
+        .icon-btn:active {
+          transform: translateY(1px);
+        }
+
+        input:not([type="file"]),
+        textarea,
+        select {
+          border-radius:
+            var(--onstood-radius-sm);
+          transition:
+            border-color .14s ease,
+            box-shadow .14s ease;
+        }
+
+        input:not([type="file"]):focus,
+        textarea:focus,
+        select:focus {
+          outline: none;
+          box-shadow:
+            0 0 0 3px rgba(37,99,235,.10);
+        }
+
+        .page-heading h1,
+        .page-heading h2,
+        .card h2,
+        .card h3 {
+          letter-spacing: -0.02em;
+        }
+
+        .muted {
+          line-height: 1.45;
+        }
+
+        [role="dialog"] > .card {
+          border-radius:
+            var(--onstood-radius-lg);
+          box-shadow:
+            var(--onstood-shadow-modal);
+        }
+
+        .conversation-options-menu {
+          border-radius:
+            var(--onstood-radius-lg) !important;
+        }
+
+        .empty {
+          border-radius:
+            var(--onstood-radius-md);
+        }
+
+        
+        
+        .onstood-network-list-search {
+          width: min(320px, 100%);
+        }
+
+        .onstood-network-connection-row {
+          transition:
+            border-color .14s ease,
+            box-shadow .14s ease,
+            transform .14s ease;
+        }
+
+        
+        .onstood-document-preview-card {
+          border: 1px solid rgba(15,23,42,.09);
+          border-radius: 14px;
+          background: #fff;
+          box-shadow: 0 6px 18px rgba(15,23,42,.045);
+          max-width: 100%;
+        }
+
+        .onstood-document-preview-footer {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px;
+          border-top: 1px solid rgba(15,23,42,.07);
+          background: rgba(248,250,252,.94);
+        }
+
+        .onstood-pdf-preview-shell {
+          background: #eef2f7;
+          min-height: 220px;
+        }
+
+        
+        .postoffice-message-scroll {
+          scroll-behavior: auto !important;
+        }
+
+@media (max-width: 640px) {
+          .onstood-document-preview-footer {
+            padding: 9px 10px;
+          }
+
+          .onstood-document-preview-card iframe {
+            height: 260px !important;
+          }
+        }
+
+@media (hover: hover) and (pointer: fine) {
+          .onstood-network-connection-row:hover {
+            border-color:
+              rgba(37,99,235,.20) !important;
+            box-shadow:
+              0 8px 22px rgba(15,23,42,.06);
+          }
+        }
+
+        @media (max-width: 900px) {
+          .onstood-home-suggestion-row {
+            grid-template-columns:
+              repeat(2, minmax(0,1fr))
+              !important;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .onstood-network-list-search {
+            width: 100%;
+            margin-left: 0 !important;
+          }
+
+          .onstood-network-connection-fields {
+            grid-template-columns:
+              minmax(0,1fr) !important;
+            gap: 2px !important;
+          }
+
+          .onstood-network-connection-row {
+            padding:
+              11px 12px !important;
+          }
+
+          .onstood-home-people-suggestions {
+            margin-left: 0;
+            margin-right: 0;
+          }
+
+          .onstood-home-suggestion-row {
+            display: flex !important;
+            gap: 8px !important;
+            overflow-x: auto;
+            scroll-snap-type:
+              x proximity;
+            padding-bottom: 3px;
+            -webkit-overflow-scrolling:
+              touch;
+          }
+
+          .onstood-home-suggestion-item {
+            min-width:
+              min(82vw, 310px) !important;
+            scroll-snap-align:
+              start;
+          }
+        }
+
+@media (max-width: 620px) {
+          .onstood-message-category-grid {
+            grid-template-columns:
+              minmax(0, 1fr) !important;
+          }
+        }
+
+@media (hover: hover) and (pointer: fine) {
+          .btn:not(:disabled):hover {
+            transform: translateY(-1px);
+          }
+
+          .card.person:hover {
+            box-shadow:
+              var(--onstood-shadow-soft);
+          }
+        }
+
+        @media (max-width: 760px) {
+          .app-grid {
+            padding-bottom:
+              calc(
+                96px +
+                env(safe-area-inset-bottom)
+              ) !important;
+          }
+
+          .page-heading {
+            margin-bottom: 14px !important;
+          }
+
+          .page-heading h1,
+          .page-heading h2 {
+            line-height: 1.08 !important;
+          }
+
+          [role="dialog"] {
+            padding:
+              max(12px, env(safe-area-inset-top))
+              12px
+              max(12px, env(safe-area-inset-bottom))
+              !important;
+          }
+
+          [role="dialog"] > .card {
+            max-height:
+              calc(
+                100dvh -
+                24px -
+                env(safe-area-inset-top) -
+                env(safe-area-inset-bottom)
+              );
+            overflow-y: auto;
+            overscroll-behavior: contain;
+          }
+
+          input:not([type="file"]),
+          textarea,
+          select {
+            font-size: 16px !important;
+          }
+
+          .btn {
+            min-height: 38px;
+          }
+
+          .icon-btn {
+            min-width: 36px;
+            min-height: 36px;
+          }
+
+          .empty {
+            padding: 22px 16px;
+          }
+        }
+
+@media (max-width: 720px) {
           .onstood-global-selection-toolbar {
             max-width: calc(100vw - 16px);
             gap: 4px;
@@ -3064,11 +3372,6 @@ function App({ session }) {
             padding: 0 7px;
             font-size: 9px;
             letter-spacing: .15px;
-          }
-
-          .onstood-global-selection-copy {
-            width: 30px;
-            height: 30px;
           }
         }
 
@@ -3863,20 +4166,35 @@ function App({ session }) {
           /* Once a conversation is actually open, use the available screen. */
           .postoffice-conversation-card:has(.postoffice-message-scroll) {
             display: flex !important;
-            min-height: calc(100dvh - 150px) !important;
-            height: calc(100dvh - 150px) !important;
-            max-height: calc(100dvh - 150px) !important;
+            min-height: 0 !important;
+            height:
+              var(
+                --onstood-mobile-chat-height,
+                calc(100dvh - 242px)
+              ) !important;
+            max-height:
+              var(
+                --onstood-mobile-chat-height,
+                calc(100dvh - 242px)
+              ) !important;
+            margin-bottom: 0 !important;
+            overflow: hidden !important;
           }
 
           .postoffice-message-scroll {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
             overscroll-behavior: contain;
             -webkit-overflow-scrolling: touch;
           }
 
           .postoffice-composer {
-            position: sticky !important;
-            bottom: 0 !important;
+            position: relative !important;
+            bottom: auto !important;
             z-index: 20 !important;
+            flex: 0 0 auto !important;
             background: #fff !important;
             grid-template-columns:
               34px 34px 34px 34px minmax(0,1fr) 38px !important;
@@ -3928,6 +4246,54 @@ function App({ session }) {
             justify-content: center !important;
             font-size: 12px !important;
             min-height: 36px !important;
+          }
+        }
+
+
+        @media (max-width: 767px) {
+          /* MOBILE OPEN CHAT ONLY.
+             Desktop must keep the original floating MiniChat. */
+          .postoffice-conversation-card:has(.postoffice-message-scroll) {
+            position: fixed !important;
+            left: 8px !important;
+            right: 8px !important;
+            top: 76px !important;
+            bottom:
+              calc(
+                82px +
+                env(safe-area-inset-bottom)
+              ) !important;
+            width: auto !important;
+            max-width: none !important;
+            height: auto !important;
+            max-height: none !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            z-index: 23000 !important;
+            border-radius: 16px !important;
+            background: #fff !important;
+            box-shadow:
+              0 12px 34px rgba(15,23,42,.13) !important;
+            overflow: hidden !important;
+          }
+
+          .postoffice-conversation-card:has(.postoffice-message-scroll)
+          .postoffice-message-scroll {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            overflow-y: auto !important;
+            overscroll-behavior-y: contain;
+            scroll-behavior: auto;
+          }
+
+          .postoffice-conversation-card:has(.postoffice-message-scroll)
+          .postoffice-composer {
+            flex: 0 0 auto !important;
+            padding-bottom:
+              max(
+                8px,
+                env(safe-area-inset-bottom)
+              ) !important;
           }
         }
 
@@ -4011,17 +4377,6 @@ function App({ session }) {
         >
           <button
             type="button"
-            className="onstood-global-selection-copy"
-            onClick={
-              copyGlobalSelection
-            }
-            title="Copy"
-          >
-            <Copy size={15} />
-          </button>
-
-          <button
-            type="button"
             className="onstood-global-selection-chip standard"
             disabled={
               globalAiAccess.loaded &&
@@ -4037,7 +4392,7 @@ function App({ session }) {
             <span className="onstood-global-selection-flow" />
             <span className="onstood-global-selection-led" />
             <span className="onstood-global-selection-label">
-              ASK ONSTOOD AI
+              ASK <OnstoodWordmark /> AI
             </span>
           </button>
 
@@ -4063,7 +4418,7 @@ function App({ session }) {
             <span className="onstood-global-selection-flow" />
             <span className="onstood-global-selection-led" />
             <span className="onstood-global-selection-label">
-              ASK ADVANCED ONSTOOD AI
+              ASK ADVANCED <OnstoodWordmark /> AI
             </span>
           </button>
         </div>
@@ -4298,6 +4653,7 @@ function AdminControlCenter({
   const [observability, setObservability] = useState({
     ai: {},
     knowledge: {},
+    documents: {},
     harvester: null
   });
 
@@ -4860,8 +5216,8 @@ function AdminControlCenter({
     if (
       !window.confirm(
         active
-          ? `Give ${label} the ${staffRole} role?`
-          : `Disable administrative access for ${label}?`
+          ? `Give ${label === 'ONSTOOD AI' ? <><OnstoodWordmark /> AI</> : label} the ${staffRole} role?`
+          : `Disable administrative access for ${label === 'ONSTOOD AI' ? <><OnstoodWordmark /> AI</> : label}?`
       )
     ) {
       return;
@@ -5046,7 +5402,7 @@ function AdminControlCenter({
           </span>
 
           <h2>
-            ONSTOOD Control Center
+            <OnstoodWordmark /> Control Center
           </h2>
 
           <p className="muted">
@@ -5108,7 +5464,7 @@ function AdminControlCenter({
             }
           >
             <Icon size={15} />
-            {label}
+            {label === 'ONSTOOD AI' ? <><OnstoodWordmark /> AI</> : label}
           </button>
 
         ))}
@@ -5250,7 +5606,7 @@ function AdminControlCenter({
               <div className="card-head"><h3>Token flow</h3><Activity size={18}/></div>
               <div className="metric"><span>Provider input tokens</span><b>{Number(observability.ai?.input_tokens || 0).toLocaleString()}</b></div>
               <div className="metric"><span>Cached input tokens</span><b>{Number(observability.ai?.cached_input_tokens || 0).toLocaleString()}</b></div>
-              <div className="metric"><span>ONSTOOD Knowledge context · est.</span><b>{Number(observability.ai?.knowledge_context_tokens_est || 0).toLocaleString()}</b></div>
+              <div className="metric"><span><OnstoodWordmark /> Knowledge context · est.</span><b>{Number(observability.ai?.knowledge_context_tokens_est || 0).toLocaleString()}</b></div>
               <div className="metric"><span>AI output tokens</span><b>{Number(observability.ai?.output_tokens || 0).toLocaleString()}</b></div>
             </div>
             <div className="card">
@@ -5269,16 +5625,56 @@ function AdminControlCenter({
         <div>
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card-head">
-              <div><h3>ONSTOOD Global Knowledge</h3><small className="muted">Licensed indexed knowledge + reference-only academic discovery.</small></div>
+              <div><h3><OnstoodWordmark /> Global Knowledge</h3><small className="muted">Licensed indexed knowledge + reference-only academic discovery.</small></div>
               <Database size={18}/>
             </div>
             <div className="stat-row">
-              <Stat label="Academic records" value={Number(observability.knowledge?.total || 0).toLocaleString()} />
+              <Stat label="Total records" value={Number(observability.knowledge?.total || 0).toLocaleString()} />
+              <Stat label="Academic records" value={Number(observability.knowledge?.academic_records || 0).toLocaleString()} />
+              <Stat label="User contributors" value={Number(observability.knowledge?.user_contributors || 0).toLocaleString()} />
               <Stat label="Indexed" value={Number(observability.knowledge?.indexed || 0).toLocaleString()} />
               <Stat label="Reference-only" value={Number(observability.knowledge?.reference_only || 0).toLocaleString()} />
               <Stat label="Added today" value={`+${Number(observability.knowledge?.added_today || 0).toLocaleString()}`} />
             </div>
           </div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-head">
+              <div>
+                <h3>Student document pipeline</h3>
+                <small className="muted">
+                  Upload → Extract/OCR → Classify → Index → Ready
+                </small>
+              </div>
+              <FileText size={18}/>
+            </div>
+
+            <div className="stat-row">
+              <Stat label="Documents" value={Number(observability.documents?.total || 0).toLocaleString()} />
+              <Stat label="Ready" value={Number(observability.documents?.ready || 0).toLocaleString()} />
+              <Stat label="OCR pending" value={Number(observability.documents?.ocr_pending || 0).toLocaleString()} />
+              <Stat label="Failed" value={Number(observability.documents?.failed || 0).toLocaleString()} />
+              <Stat label="Knowledge chunks" value={Number(observability.documents?.knowledge_chunks || 0).toLocaleString()} />
+              <Stat label="Languages" value={Number(observability.documents?.languages || 0).toLocaleString()} />
+            </div>
+
+            <div className="grid2" style={{ marginTop: 14 }}>
+              <div className="metric">
+                <span>Extracting / classifying / indexing</span>
+                <b>
+                  {(
+                    Number(observability.documents?.extracting || 0) +
+                    Number(observability.documents?.classifying || 0) +
+                    Number(observability.documents?.indexing || 0)
+                  ).toLocaleString()}
+                </b>
+              </div>
+              <div className="metric">
+                <span>Extracted characters</span>
+                <b>{Number(observability.documents?.extracted_chars || 0).toLocaleString()}</b>
+              </div>
+            </div>
+          </div>
+
           <div className="grid2">
             <div className="card">
               <div className="card-head"><h3>Coverage</h3><Globe2 size={18}/></div>
@@ -6147,11 +6543,26 @@ function Root() {
   const [confirmationError, setConfirmationError] =
     useState('');
 
+  const [confirmationEmail, setConfirmationEmail] =
+    useState('');
+
+  const [confirmationResendBusy, setConfirmationResendBusy] =
+    useState(false);
+
+  const [confirmationResendMessage, setConfirmationResendMessage] =
+    useState('');
+
   const [needsAccountType, setNeedsAccountType] =
     useState(false);
 
   const [profileCheckBusy, setProfileCheckBusy] =
     useState(false);
+
+  // Prevent routine auth/session refresh events (including mobile
+  // file-picker returns) from re-running the account gate and
+  // unmounting the active App/composer for the same signed-in user.
+  const checkedAccountGateUserIdRef =
+    useRef(null);
 
 
   async function checkAccountType(
@@ -6164,11 +6575,15 @@ function Root() {
 
     if (!userId) {
 
+      checkedAccountGateUserIdRef.current = null;
       setNeedsAccountType(false);
       return;
 
     }
 
+
+    checkedAccountGateUserIdRef.current =
+      userId;
 
     setProfileCheckBusy(true);
 
@@ -6178,7 +6593,7 @@ function Root() {
       error
     } = await supabase
       .from('profiles')
-      .select('id, account_type')
+      .select('id, account_type, social_name_edit_used')
       .eq('id', userId)
       .maybeSingle();
 
@@ -6197,11 +6612,134 @@ function Root() {
     }
 
 
+    const identityProviders =
+      (currentSession?.user?.identities || [])
+        .map(identity => identity?.provider)
+        .filter(Boolean);
+
+    const primaryProvider =
+      currentSession?.user?.app_metadata?.provider ||
+      '';
+
+    const isSocialIdentity =
+      primaryProvider === 'google' ||
+      primaryProvider === 'apple' ||
+      identityProviders.includes('google') ||
+      identityProviders.includes('apple');
+
     setNeedsAccountType(
-      !data?.account_type
+      !data?.account_type ||
+      (
+        isSocialIdentity &&
+        !Boolean(data?.social_name_edit_used)
+      )
     );
 
     setProfileCheckBusy(false);
+
+  }
+
+
+  function cleanAuthUrl() {
+    try {
+      window.history.replaceState(
+        {},
+        document.title,
+        '/'
+      );
+    } catch {}
+  }
+
+
+  async function finishConfirmedSession(
+    confirmedSession
+  ) {
+
+    if (!confirmedSession) {
+      return false;
+    }
+
+    const confirmedAt =
+      confirmedSession?.user?.email_confirmed_at ||
+      confirmedSession?.user?.confirmed_at ||
+      null;
+
+    if (!confirmedAt) {
+      return false;
+    }
+
+    setSession(confirmedSession);
+
+    await checkAccountType(
+      confirmedSession
+    );
+
+    setConfirmationStatus('success');
+    setConfirmationError('');
+    setConfirmationResendMessage('');
+
+    cleanAuthUrl();
+    setConfirmationMode(false);
+
+    return true;
+  }
+
+
+  async function resendSignupConfirmation() {
+
+    const email =
+      confirmationEmail
+        .trim()
+        .toLowerCase();
+
+    if (!email) {
+      setConfirmationResendMessage(
+        'Enter the same email address you used to create this account.'
+      );
+      return;
+    }
+
+    setConfirmationResendBusy(true);
+    setConfirmationResendMessage('');
+
+    try {
+
+      const emailRedirectTo =
+        `${window.location.origin}/`;
+
+      const { error } =
+        await supabase.auth.resend({
+          type: 'signup',
+          email,
+          options: {
+            emailRedirectTo
+          }
+        });
+
+      if (error) {
+        setConfirmationResendMessage(
+          error.message ||
+          'Could not send a new confirmation email.'
+        );
+        return;
+      }
+
+      setConfirmationResendMessage(
+        'A new confirmation email has been sent. Use the newest link in your inbox.'
+      );
+
+    } catch (error) {
+
+      setConfirmationResendMessage(
+        error?.message ||
+        'Could not send a new confirmation email.'
+      );
+
+    } finally {
+
+      setConfirmationResendBusy(false);
+
+    }
 
   }
 
@@ -6218,11 +6756,27 @@ function Root() {
         const url =
           new URL(window.location.href);
 
-        const tokenHash =
+        let tokenHash =
           url.searchParams.get('token_hash');
+
+        // Backward compatibility for ONSTOOD confirmation emails that
+        // were generated as ?onstood_confirm=1?token_hash=...&type=email.
+        // URLSearchParams cannot see token_hash in that malformed shape,
+        // so recover it directly from the raw URL.
+        if (!tokenHash) {
+          const malformedTokenMatch =
+            window.location.href.match(/[?&]token_hash=([^&]+)/);
+
+          if (malformedTokenMatch?.[1]) {
+            tokenHash = decodeURIComponent(malformedTokenMatch[1]);
+          }
+        }
 
         const emailType =
           url.searchParams.get('type');
+
+        const authCode =
+          url.searchParams.get('code');
 
         const authError =
           url.searchParams.get('error_description') ||
@@ -6230,13 +6784,25 @@ function Root() {
 
         if (authError) {
 
-          setRecoveryError(
+          const readableError =
             decodeURIComponent(
               String(authError).replace(/\+/g, ' ')
-            )
-          );
+            );
+
+          if (recoveryMode) {
+            setRecoveryError(readableError);
+          }
+
+          if (confirmationMode) {
+            setConfirmationStatus('error');
+            setConfirmationError(readableError);
+          }
 
         }
+
+        /* =========================
+           PASSWORD RECOVERY
+           ========================= */
 
         if (
           url.pathname === '/reset-password' &&
@@ -6273,26 +6839,33 @@ function Root() {
 
         }
 
-        if (
-          url.pathname ===
-            '/confirm-signup' ||
-          url.searchParams.get(
-            'onstood_confirm'
-          ) === '1'
-        ) {
+        /* =========================
+           EMAIL CONFIRMATION
+           Accept every Supabase callback style:
+           token_hash, PKCE code, or an already-created session.
+           ========================= */
+
+        const isSignupConfirmation =
+          url.pathname === '/confirm-signup' ||
+          url.searchParams.get('onstood_confirm') === '1' ||
+          emailType === 'email' ||
+          emailType === 'signup';
+
+        if (isSignupConfirmation) {
 
           setConfirmationMode(true);
           setConfirmationStatus('checking');
           setConfirmationError('');
+          setConfirmationResendMessage('');
 
-          if (!tokenHash || emailType !== 'email') {
+          let confirmedSession = null;
+          let verificationError = null;
 
-            setConfirmationStatus('error');
-            setConfirmationError(
-              'This confirmation link is incomplete or invalid.'
-            );
-
-          } else {
+          /* 1) Token-hash confirmation link. */
+          if (
+            tokenHash &&
+            (emailType === 'email' || emailType === 'signup')
+          ) {
 
             const {
               data: confirmationData,
@@ -6302,43 +6875,59 @@ function Root() {
               type: 'email'
             });
 
-            if (confirmationVerifyError) {
+            verificationError =
+              confirmationVerifyError || null;
 
-              setConfirmationStatus('error');
-              setConfirmationError(
-                confirmationVerifyError.message ||
-                'This confirmation link is invalid or has expired.'
-              );
+            confirmedSession =
+              confirmationData?.session || null;
 
-            } else {
+          /* 2) PKCE-style callback. */
+          } else if (authCode) {
 
-              const confirmedSession =
-                confirmationData?.session || null;
+            const {
+              data: exchangeData,
+              error: exchangeError
+            } = await supabase.auth.exchangeCodeForSession(
+              authCode
+            );
 
-              setConfirmationStatus('success');
-              setConfirmationError('');
+            verificationError =
+              exchangeError || null;
 
-              if (confirmedSession) {
+            confirmedSession =
+              exchangeData?.session || null;
 
-                setSession(confirmedSession);
+          }
 
-                await checkAccountType(
-                  confirmedSession
-                );
+          /* 3) Some hosted confirmation links create the session
+             before our React code runs. Never reject those merely
+             because token_hash is absent. */
+          if (!confirmedSession) {
 
-              }
+            const {
+              data: existingData,
+              error: existingSessionError
+            } = await supabase.auth.getSession();
 
-              // Seamless activation:
-              // confirmed users go straight into ONSTOOD.
-              window.history.replaceState(
-                {},
-                document.title,
-                '/'
-              );
-
-              setConfirmationMode(false);
-
+            if (!existingSessionError) {
+              confirmedSession =
+                existingData?.session || null;
             }
+
+          }
+
+          const finished =
+            await finishConfirmedSession(
+              confirmedSession
+            );
+
+          if (!finished) {
+
+            setConfirmationStatus('error');
+            setConfirmationError(
+              verificationError?.message ||
+              'This confirmation link is invalid, expired, or has already been replaced by a newer link. If the account is still unconfirmed, request another confirmation email below.'
+            );
 
           }
 
@@ -6347,9 +6936,17 @@ function Root() {
       } catch (error) {
 
         console.error(
-          'Recovery URL handling error:',
+          'Auth URL handling error:',
           error
         );
+
+        if (confirmationMode) {
+          setConfirmationStatus('error');
+          setConfirmationError(
+            error?.message ||
+            'The confirmation link could not be processed.'
+          );
+        }
 
       }
 
@@ -6412,13 +7009,33 @@ function Root() {
 
         if (newSession) {
 
-          setTimeout(() => {
-            checkAccountType(
-              newSession
-            );
-          }, 0);
+          const nextUserId =
+            newSession?.user?.id ||
+            null;
+
+          // Supabase can emit routine session events while an Android
+          // native picker is opening/closing. Re-checking the profile
+          // gate for the same user can replace <App /> and destroy the
+          // selected Photo/Video/Document state. Only gate a user once
+          // per signed-in lifecycle; logout clears the marker below.
+          if (
+            nextUserId &&
+            checkedAccountGateUserIdRef.current !==
+              nextUserId
+          ) {
+
+            setTimeout(() => {
+              checkAccountType(
+                newSession
+              );
+            }, 0);
+
+          }
 
         } else {
+
+          checkedAccountGateUserIdRef.current =
+            null;
 
           setNeedsAccountType(false);
 
@@ -6439,14 +7056,11 @@ function Root() {
   }, []);
 
 
-  if (
-    loading ||
-    profileCheckBusy
-  ) {
+  if (loading) {
 
     return (
       <div className="loading">
-        Starting ONSTOOD…
+        Starting <OnstoodWordmark />…
       </div>
     );
 
@@ -6461,7 +7075,7 @@ function Root() {
         <div className="auth-left">
 
           <div className="brand huge">
-            ONSTOOD<span>.</span>
+            <OnstoodWordmark /><span>.</span>
           </div>
 
           <h1>
@@ -6483,7 +7097,7 @@ function Root() {
           <div className="auth-pills">
             <span>Secure</span>
             <span>Email verified</span>
-            <span>ONSTOOD</span>
+            <span><OnstoodWordmark /></span>
           </div>
 
         </div>
@@ -6491,7 +7105,7 @@ function Root() {
         <div className="auth-card">
 
           <div className="brand">
-            ONSTOOD<span>.</span>
+            <OnstoodWordmark /><span>.</span>
           </div>
 
           {confirmationStatus === 'checking' && (
@@ -6509,21 +7123,17 @@ function Root() {
 
               <div className="message success">
                 Your email has been confirmed successfully.
-                Welcome to ONSTOOD.
+                Welcome to <OnstoodWordmark />.
               </div>
 
               <button
                 className="btn primary full"
                 onClick={() => {
-                  window.history.replaceState(
-                    {},
-                    document.title,
-                    '/'
-                  );
+                  cleanAuthUrl();
                   setConfirmationMode(false);
                 }}
               >
-                Continue to sign in
+                Continue to <OnstoodWordmark />
               </button>
             </>
           )}
@@ -6536,17 +7146,49 @@ function Root() {
                 {confirmationError}
               </div>
 
+              <p className="muted">
+                If this account is still unconfirmed, enter the same email address and <OnstoodWordmark /> will send a fresh confirmation link to that existing account.
+              </p>
+
+              <input
+                type="email"
+                placeholder="Email used to create the account"
+                value={confirmationEmail}
+                onChange={event =>
+                  setConfirmationEmail(
+                    event.target.value
+                  )
+                }
+                autoComplete="email"
+              />
+
+              {confirmationResendMessage && (
+                <div className="message">
+                  {confirmationResendMessage}
+                </div>
+              )}
+
               <button
+                type="button"
                 className="btn primary full"
+                disabled={confirmationResendBusy}
+                onClick={resendSignupConfirmation}
+              >
+                {confirmationResendBusy
+                  ? 'Sending new link…'
+                  : 'Send a new confirmation link'}
+              </button>
+
+              <button
+                type="button"
+                className="btn subtle full"
+                style={{ marginTop: 10 }}
                 onClick={() => {
-                  window.history.replaceState(
-                    {},
-                    document.title,
-                    '/'
-                  );
+                  cleanAuthUrl();
                   setConfirmationMode(false);
                   setConfirmationStatus('checking');
                   setConfirmationError('');
+                  setConfirmationResendMessage('');
                 }}
               >
                 Back to sign in
@@ -6561,7 +7203,7 @@ function Root() {
               fontSize: 12
             }}
           >
-            Secure account activation powered by ONSTOOD Auth.
+            Secure account activation powered by <OnstoodWordmark /> Auth.
           </div>
 
         </div>
@@ -6582,7 +7224,7 @@ function Root() {
           <div className="auth-left">
 
             <div className="brand huge">
-              ONSTOOD<span>.</span>
+              <OnstoodWordmark /><span>.</span>
             </div>
 
             <h1>
@@ -6601,7 +7243,7 @@ function Root() {
           <div className="auth-card">
 
             <div className="brand">
-              ONSTOOD<span>.</span>
+              <OnstoodWordmark /><span>.</span>
             </div>
 
             <h2>
