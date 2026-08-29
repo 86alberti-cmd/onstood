@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { OnstoodRichText } from '../OnstoodRichText';
-import OnstoodWordmark from '../OnstoodWordmark';
 import { Globe2, History, Search, Send, Sparkles, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
+import OnstoodWordmark from '../OnstoodWordmark';
 
 export default function AI({
   profile,
@@ -36,7 +35,7 @@ export default function AI({
     if (!isPro) {
       setMessages(current => [...current, {
         id: `local-${Date.now()}`, role: 'assistant', mode: 'advanced',
-        content: 'I found this proactively, but the full analysis uses Advanced AI and is available with ONSTOOD PRO.'
+        content: 'I found this proactively, but the full analysis uses Advanced AI and requires the Advanced plan.'
       }]);
       focusInput();
       return;
@@ -69,6 +68,8 @@ export default function AI({
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState({ standard_count: 0, advanced_count: 0 });
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingNotice, setBillingNotice] = useState('');
   const [historySearch, setHistorySearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
@@ -86,7 +87,53 @@ export default function AI({
 
   const standardLeft = Math.max(0, Number(plan.standard_limit || 0) - Number(usage.standard_count || 0));
   const advancedLeft = Math.max(0, Number(plan.advanced_limit || 0) - Number(usage.advanced_count || 0));
-  const isPro = plan.plan_code === 'pro';
+  const isPro = Number(plan.advanced_limit || 0) > 0;
+
+  async function startAdvancedCheckout() {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    setBillingNotice('');
+    try {
+      const origin = window.location.origin;
+      const basePath = window.location.pathname || '/';
+      const { data, error } = await supabase.functions.invoke('onstood-paypal-create-subscription', {
+        body: {
+          return_url: `${origin}${basePath}?paypal=success`,
+          cancel_url: `${origin}${basePath}?paypal=cancelled`
+        }
+      });
+      if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Checkout could not be started.');
+      if (data?.already_active) {
+        await loadUsage();
+        setBillingNotice('Advanced is already active on your account.');
+        return;
+      }
+      if (!data?.approval_url) throw new Error('PayPal did not return an approval link.');
+      window.location.assign(data.approval_url);
+    } catch (error) {
+      setBillingNotice(error?.message || 'Checkout could not be started.');
+    } finally {
+      setBillingBusy(false);
+    }
+  }
+
+  async function cancelAdvancedRenewal() {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    setBillingNotice('');
+    try {
+      const { data, error } = await supabase.functions.invoke('onstood-paypal-cancel-subscription', { body: {} });
+      if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Cancellation could not be completed.');
+      setBillingNotice(data?.access_until
+        ? `Renewal cancelled. Advanced stays active until ${new Date(data.access_until).toLocaleDateString()}.`
+        : 'Renewal cancelled.');
+      await loadUsage();
+    } catch (error) {
+      setBillingNotice(error?.message || 'Cancellation could not be completed.');
+    } finally {
+      setBillingBusy(false);
+    }
+  }
 
   function focusInput() {
     window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -96,14 +143,68 @@ export default function AI({
     window.requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }));
   }
 
-  function renderAiText(value) {
-    const parts = String(value || '').split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((part, index) => {
-      if (part.startsWith('**') && part.endsWith('**')) {
-        return <strong key={index}>{part.slice(2, -2)}</strong>;
+  async function openOnstoodDocument(documentId) {
+    const popup = window.open('about:blank', '_blank');
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        'onstood-document-download',
+        { body: { document_id: documentId } }
+      );
+      if (error || !data?.url) {
+        popup?.close?.();
+        throw new Error(data?.error || error?.message || 'The document could not be prepared for download.');
       }
-      return <React.Fragment key={index}>{part}</React.Fragment>;
-    });
+      if (popup) {
+        popup.opener = null;
+        popup.location.href = data.url;
+      } else {
+        window.location.assign(data.url);
+      }
+    } catch (error) {
+      popup?.close?.();
+      setMessages(current => [...current, {
+        id: `download-error-${Date.now()}`,
+        role: 'assistant',
+        mode: 'standard',
+        content: error?.message || 'The document could not be prepared for download.'
+      }]);
+    }
+  }
+
+  function renderAiText(value) {
+    const textValue = String(value || '');
+    const tokenRx = /\[\[ONSTOOD_DOWNLOAD:([0-9a-f-]{36})\|([^\]]+)\]\]/gi;
+    const nodes = [];
+    let cursor = 0;
+    let match;
+
+    const renderText = (text, keyBase) => String(text || '')
+      .split(/(\*\*[^*]+\*\*)/g)
+      .map((part, index) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={`${keyBase}-${index}`}>{part.slice(2, -2)}</strong>;
+        }
+        return <React.Fragment key={`${keyBase}-${index}`}>{part}</React.Fragment>;
+      });
+
+    while ((match = tokenRx.exec(textValue)) !== null) {
+      if (match.index > cursor) nodes.push(...renderText(textValue.slice(cursor, match.index), `text-${cursor}`));
+      const documentId = match[1];
+      const label = decodeURIComponent(match[2]);
+      nodes.push(
+        <button
+          key={`download-${documentId}-${match.index}`}
+          type="button"
+          onClick={() => openOnstoodDocument(documentId)}
+          style={{ border: 0, padding: 0, background: 'transparent', color: '#168CFF', font: 'inherit', fontWeight: 800, textDecoration: 'underline', cursor: 'pointer' }}
+        >
+          {label}
+        </button>
+      );
+      cursor = tokenRx.lastIndex;
+    }
+    if (cursor < textValue.length) nodes.push(...renderText(textValue.slice(cursor), `text-${cursor}`));
+    return nodes;
   }
 
   function isExamRevisionIntent(value) {
@@ -316,39 +417,23 @@ export default function AI({
     return data.id;
   }
 
-  async function refundQuestion(questionMode) {
-    try { await supabase.rpc('refund_ai_question', { p_mode: questionMode }); } catch {}
-  }
-
   async function searchOnstoodKnowledge(question) {
     try {
-      const { data, error } =
-        await supabase.functions.invoke(
-          'onstood-knowledge-search',
-          {
-            body: {
-              query: String(question || '').slice(0, 1200)
-            }
-          }
-        );
-
-      if (error) {
-        console.warn(
-          'ONSTOOD Knowledge search:',
-          error
-        );
-        return [];
-      }
-
-      return Array.isArray(data?.results)
-        ? data.results
-        : [];
-    } catch (error) {
-      console.warn(
-        'ONSTOOD Knowledge search:',
-        error
+      const { data, error } = await supabase.functions.invoke(
+        'onstood-knowledge-search',
+        { body: { query: String(question || '').slice(0, 1200) } }
       );
-      return [];
+      if (error) {
+        console.warn('OnStood Knowledge search:', error);
+        return { results: [], downloads: [] };
+      }
+      return {
+        results: Array.isArray(data?.results) ? data.results : [],
+        downloads: Array.isArray(data?.downloads) ? data.downloads : []
+      };
+    } catch (error) {
+      console.warn('OnStood Knowledge search:', error);
+      return { results: [], downloads: [] };
     }
   }
 
@@ -372,161 +457,79 @@ export default function AI({
   }
 
 
-  function uniqueKnowledgeMatches(results) {
-    if (!Array.isArray(results)) return [];
+  function knowledgeBudget(question) {
+    const text = String(question || '').trim();
+    const words = text.split(/\s+/).filter(Boolean).length;
+    const complexIntent = /(compare|krahas|analyse|analy|analiz|exam|provim|test|model|essay|ese|research|kërkim|explain in detail|shpjego në detaje|table|tabel|argument|evaluate|vlerëso)/i.test(text);
+    const exactDocumentIntent = /(law|ligj|article|neni|document|dokument|pdf|download|shkarko)/i.test(text);
+    if (complexIntent || words >= 55) return { maxSources: 5, maxPerSource: 1200, maxContext: 6000 };
+    if (exactDocumentIntent || words >= 24) return { maxSources: 4, maxPerSource: 1900, maxContext: 6000 };
+    return { maxSources: 3, maxPerSource: 900, maxContext: 3000 };
+  }
 
+  function uniqueKnowledgeMatches(results, question = '') {
+    if (!Array.isArray(results)) return [];
+    const budget = knowledgeBudget(question);
     const unique = [];
     const seen = new Set();
-
-    for (const item of results) {
+    const ranked = [...results].sort((a, b) =>
+      Number(b?.context_priority || b?.rank || 0) - Number(a?.context_priority || a?.rank || 0)
+    );
+    for (const item of ranked) {
       const excerpt = String(item?.excerpt || '').trim();
-      if (!excerpt) continue;
-
-      const key =
-        `${item?.source_type || ''}:` +
-        `${item?.source_id || item?.document_id || ''}:` +
-        excerpt;
-
+      const title = String(item?.title || item?.file_name || '').trim();
+      const titleScore = Number(item?.title_match_score || 0);
+      const metadataOnlyExactCandidate = !excerpt && title && titleScore >= 12;
+      const readable = item?.content_readable !== false;
+      if ((!excerpt || !readable) && !metadataOnlyExactCandidate) continue;
+      const key = `${item?.source_type || ''}:${item?.source_id || item?.document_id || ''}:${title}`;
       if (seen.has(key)) continue;
-
       seen.add(key);
       unique.push(item);
-
-      if (unique.length >= 4) break;
+      if (unique.length >= budget.maxSources) break;
     }
-
     return unique;
   }
 
 
-  function buildKnowledgeContext(results) {
-    const unique = uniqueKnowledgeMatches(results);
-
-    return unique
-      .map((item, index) => {
-        const excerpt = String(item?.excerpt || '')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 900);
-
-        return [
-          `SOURCE ${index + 1}`,
-          `Title: ${item?.title || item?.file_name || 'Student contribution'}`,
-          `Type: ${knowledgeTypeLabel(item?.knowledge_type)}`,
-          `Quality: ${item?.quality_status || 'accepted'}`,
-          `Excerpt: ${excerpt}`
-        ].join('\n');
-      })
-      .join('\n\n')
-      .slice(0, 3600);
+  function buildKnowledgeContext(results, downloads = [], question = '') {
+    const budget = knowledgeBudget(question);
+    const unique = uniqueKnowledgeMatches(results, question);
+    const downloadableIds = new Set((Array.isArray(downloads) ? downloads : []).map(item => String(item?.document_id || '')).filter(Boolean));
+    return unique.map((item, index) => {
+      const excerpt = String(item?.excerpt || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+        .slice(0, budget.maxPerSource);
+      const sourceId = String(item?.source_id || item?.document_id || '');
+      const downloadable = downloadableIds.has(sourceId) || item?.download_available === true;
+      return [
+        `SOURCE ${index + 1}`,
+        `Title: ${item?.title || item?.file_name || 'Student contribution'}`,
+        `Type: ${knowledgeTypeLabel(item?.knowledge_type)}`,
+        `Quality: ${item?.quality_status || 'accepted'}`,
+        `Relevance priority: ${Number(item?.context_priority || item?.rank || 0).toFixed(2)}`,
+        `Exact-title score: ${Number(item?.title_match_score || 0)}`,
+        `Original file available to student: ${downloadable ? 'yes' : 'no'}`,
+        excerpt ? `Excerpt:\n${excerpt}` : 'Excerpt: unavailable or unreadable; use the title/identifier only for identity verification and do not invent document text.'
+      ].join('\n');
+    }).join('\n\n').slice(0, budget.maxContext);
   }
 
-
-  function formatKnowledgeSources(results) {
-    const unique = uniqueKnowledgeMatches(results);
-
-    if (!unique.length) return '';
-
-    return [
-      '',
-      '',
-      `ONSTOOD Knowledge · ${unique.length} relevant source${unique.length === 1 ? '' : 's'}`,
-      ...unique.map((item, index) => {
-        const title =
-          item?.title ||
-          item?.file_name ||
-          'Student contribution';
-
-        const status =
-          item?.quality_status === 'disputed'
-            ? ' · disputed'
-            : item?.quality_status === 'outdated'
-              ? ' · may be outdated'
-              : '';
-
-        return `${index + 1}. ${title} · ${knowledgeTypeLabel(item?.knowledge_type)}${status}`;
-      }),
-      '',
-      'ONSTOOD used only small, privacy-filtered excerpts for answer generation; original contributed files were not sent as an external knowledge base.'
-    ].join('\n');
-  }
-
-
-  async function consumeQuestionQuota(questionMode) {
-    if (
-      questionMode === 'standard' &&
-      standardLeft <= 0
-    ) {
-      throw new Error(
-        'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.'
-      );
-    }
-
-    if (
-      questionMode === 'advanced' &&
-      !isPro
-    ) {
-      throw new Error(
-        'Advanced AI is available with ONSTOOD PRO. PRO is planned at €8.99/month.'
-      );
-    }
-
-    if (
-      questionMode === 'advanced' &&
-      advancedLeft <= 0
-    ) {
-      throw new Error(
-        'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.'
-      );
-    }
-
-    const {
-      data: quotaData,
-      error: quotaError
-    } = await supabase.rpc(
-      'consume_ai_question',
-      { p_mode: questionMode }
-    );
-
-    const quota =
-      Array.isArray(quotaData)
-        ? quotaData[0]
-        : quotaData;
-
-    if (quotaError || !quota?.allowed) {
-      throw new Error(
-        'Daily AI allowance reached. Refreshes at 12:00 PM.'
-      );
-    }
-
-    setUsage({
-      standard_count:
-        Number(quota.standard_used || 0),
-      advanced_count:
-        Number(quota.advanced_used || 0)
+  function appendDownloadActions(answer, downloads) {
+    const usable = (Array.isArray(downloads) ? downloads : [])
+      .filter(item => item?.document_id && item?.file_name && Number(item?.title_match_score || 0) >= 12)
+      .slice(0, 2);
+    if (!usable.length) return String(answer || '');
+    const lines = usable.map(item => {
+      const label = `Klikoni këtu për të shkarkuar ${item.file_name}`;
+      return `[[ONSTOOD_DOWNLOAD:${item.document_id}|${encodeURIComponent(label)}]]`;
     });
-
-    setPlan(current => ({
-      ...current,
-      plan_code:
-        quota.plan_code ||
-        current.plan_code,
-      standard_limit:
-        Number(
-          quota.standard_limit ??
-          current.standard_limit
-        ),
-      advanced_limit:
-        Number(
-          quota.advanced_limit ??
-          current.advanced_limit
-        )
-    }));
-
-    onUsageChanged?.();
-
-    return quota;
+    return [String(answer || '').trim(), '', usable.length === 1 ? 'Dokumenti origjinal është i disponueshëm:' : 'Dokumentet origjinale janë të disponueshme:', ...lines].filter(Boolean).join('\n');
   }
+
 
 
   async function send(
@@ -536,306 +539,80 @@ export default function AI({
     privacyScope = 'user_prompt'
   ) {
     event?.preventDefault?.();
-
-    const question =
-      String(forcedQuestion ?? text).trim();
-
+    const question = String(forcedQuestion ?? text).trim();
     if (!question || busy) return;
+    const questionMode = forcedMode === 'advanced' ? 'advanced' : 'standard';
 
-    const questionMode =
-      forcedMode === 'advanced'
-        ? 'advanced'
-        : 'standard';
-
-    const privateOnstoodRequest =
-      privacyScope === 'onstood_content';
+    if (questionMode === 'standard' && standardLeft <= 0) {
+      setMessages(current => [...current, { id: `quota-${Date.now()}`, role: 'assistant', mode: 'standard', content: 'Your 5 free Ask AI questions are finished. They refresh at 12:00 PM.' }]);
+      focusInput();
+      return;
+    }
+    if (questionMode === 'advanced' && !isPro) {
+      setMessages(current => [...current, { id: `quota-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Advanced AI is available with the Advanced plan at €16.99/month.' }]);
+      focusInput();
+      return;
+    }
+    if (questionMode === 'advanced' && advancedLeft <= 0) {
+      setMessages(current => [...current, { id: `quota-${Date.now()}`, role: 'assistant', mode: 'advanced', content: 'Your Advanced AI allowance is finished. It refreshes at 12:00 PM.' }]);
+      focusInput();
+      return;
+    }
 
     setBusy(true);
     setText('');
-
-    let activeId = null;
-    let quotaConsumed = false;
-    let successfulAnswer = false;
-
     try {
-      activeId =
-        await ensureConversation(question);
-
-      const userMessage = {
-        conversation_id: activeId,
-        user_id: profile.id,
-        role: 'user',
-        mode: questionMode,
-        content: question
-      };
-
-      const {
-        data: savedUser,
-        error: saveUserError
-      } = await supabase
-        .from('ai_messages')
-        .insert(userMessage)
-        .select(
-          'id,role,mode,content,created_at'
-        )
-        .single();
-
-      if (saveUserError) {
-        throw saveUserError;
-      }
-
-      setMessages(current => [
-        ...current,
-        savedUser
-      ]);
-
+      const activeId = await ensureConversation(question);
+      const userMessage = { conversation_id: activeId, user_id: profile.id, role: 'user', mode: questionMode, content: question };
+      const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,created_at').single();
+      if (saveUserError) throw saveUserError;
+      setMessages(current => [...current, savedUser]);
       scrollChat();
 
-      // A successful ONSTOOD AI answer always consumes the selected
-      // Standard/Advanced allowance, regardless of whether the useful
-      // information comes from ONSTOOD Knowledge or the external model.
-      await consumeQuestionQuota(questionMode);
-      quotaConsumed = true;
+      const knowledge = await searchOnstoodKnowledge(question);
+      const knowledgeMatches = knowledge.results;
+      const downloads = knowledge.downloads;
+      const knowledgeContext = buildKnowledgeContext(knowledgeMatches, downloads, question);
 
-      // Knowledge is checked first. Search returns privacy-filtered,
-      // quality-gated excerpts rather than original contributed files.
-      const knowledgeMatches =
-        await searchOnstoodKnowledge(question);
-
-      const knowledgeContext =
-        buildKnowledgeContext(
-          knowledgeMatches
-        );
-
-      let answer = '';
-
-      if (knowledgeContext) {
-        // Refine the small privacy-filtered retrieval with ONSTOOD AI.
-        // The original document/post is never sent as the knowledge base.
-        const { data, error } =
-          await supabase.functions.invoke(
-            'onstood-ai',
-            {
-              body: {
-                message: question,
-                mode: questionMode,
-                knowledge_context:
-                  knowledgeContext,
-                knowledge_source_count: uniqueKnowledgeMatches(knowledgeMatches).length,
-                answer_language: answerLanguage
-              }
-            }
-          );
-
-        if (!error && data?.answer) {
-          answer = [
-            data.answer,
-            formatKnowledgeSources(
-              knowledgeMatches
-            )
-          ].join('');
-        } else {
-          // If refinement is temporarily unavailable, ONSTOOD can still
-          // return the privacy-filtered Knowledge result. The student has
-          // received a useful answer, so the allowance remains consumed.
-          const fallback = uniqueKnowledgeMatches(
-            knowledgeMatches
-          );
-
-          answer = [
-            'ONSTOOD Knowledge found relevant material for your question.',
-            '',
-            ...fallback.map((item, index) => {
-              const clean = String(
-                item?.excerpt || ''
-              )
-                .replace(/\s+/g, ' ')
-                .trim()
-                .slice(0, 700);
-
-              return [
-                `${index + 1}. ${item?.title || item?.file_name || 'Student contribution'}`,
-                `${knowledgeTypeLabel(item?.knowledge_type)}`,
-                clean
-              ].join('\n');
-            }),
-            formatKnowledgeSources(
-              knowledgeMatches
-            )
-          ].join('\n');
-        }
-
-        successfulAnswer = Boolean(
-          String(answer || '').trim()
-        );
-      } else if (privateOnstoodRequest) {
-        // Selected private ONSTOOD content is not forwarded when it has
-        // no approved Knowledge match. No useful answer = no charge.
-        await refundQuestion(questionMode);
-        await loadUsage();
-        quotaConsumed = false;
-
-        answer =
-          "Sorry, we couldn't find reliable information for your request. Please try rephrasing your question.";
-
-        successfulAnswer = false;
-      } else {
-        const { data, error } =
-          await supabase.functions.invoke(
-            'onstood-ai',
-            {
-              body: {
-                message: question,
-                mode: questionMode,
-                answer_language: answerLanguage
-              }
-            }
-          );
-
-        if (error || !data?.answer) {
-          await refundQuestion(questionMode);
-          await loadUsage();
-          quotaConsumed = false;
-
-          throw new Error(
-            data?.error ||
-            error?.message ||
-            "Sorry, we couldn't find reliable information for your request. Your AI question was not charged."
-          );
-        }
-
-        answer = data.answer;
-        successfulAnswer = true;
-      }
-
-      const {
-        data: savedAi,
-        error: saveAiError
-      } = await supabase
-        .from('ai_messages')
-        .insert({
-          conversation_id: activeId,
-          user_id: profile.id,
-          role: 'assistant',
+      const { data, error } = await supabase.functions.invoke('onstood-ai', {
+        body: {
+          message: question,
           mode: questionMode,
-          content: answer
-        })
-        .select(
-          'id,role,mode,content,created_at'
-        )
-        .single();
-
-      if (saveAiError) {
-        // If the user never receives the successful answer because
-        // persistence fails, refund the quota.
-        if (
-          quotaConsumed &&
-          successfulAnswer
-        ) {
-          await refundQuestion(
-            questionMode
-          );
-          await loadUsage();
-          quotaConsumed = false;
+          knowledge_context: knowledgeContext || undefined,
+          knowledge_source_count: uniqueKnowledgeMatches(knowledgeMatches, question).length,
+          answer_language: answerLanguage,
+          conversation_id: activeId
         }
+      });
 
-        throw saveAiError;
+      if (error || !data?.answer) {
+        if (data?.code === 'AI_QUOTA_REACHED') await loadUsage();
+        throw new Error(data?.error || error?.message || "Sorry, we couldn't complete the AI request.");
       }
 
-      setMessages(current => [
-        ...current,
-        savedAi
-      ]);
+      // Always refresh from the authoritative quota RPC after a successful answer.
+      // This prevents the visible counter from staying one question behind.
+      await loadUsage();
 
-      await supabase
-        .from('ai_conversations')
-        .update({
-          updated_at:
-            new Date().toISOString()
-        })
-        .eq('id', activeId);
-
-      await loadConversations(
-        activeId
-      );
+      const answer = appendDownloadActions(data.answer, downloads);
+      const { data: savedAi, error: saveAiError } = await supabase.from('ai_messages').insert({
+        conversation_id: activeId,
+        user_id: profile.id,
+        role: 'assistant',
+        mode: questionMode,
+        content: answer
+      }).select('id,role,mode,content,created_at').single();
+      if (saveAiError) throw saveAiError;
+      setMessages(current => [...current, savedAi]);
+      await supabase.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', activeId);
+      await loadConversations(activeId);
     } catch (error) {
-      if (
-        quotaConsumed &&
-        !successfulAnswer
-      ) {
-        await refundQuestion(
-          questionMode
-        );
-        await loadUsage();
-        quotaConsumed = false;
-      }
-
-      setMessages(current => [
-        ...current,
-        {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          mode: questionMode,
-          content:
-            error.message ||
-            "Sorry, we couldn't find reliable information for your request."
-        }
-      ]);
+      setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', mode: questionMode, content: error?.message || "Sorry, we couldn't complete the AI request." }]);
     } finally {
       setBusy(false);
       focusInput();
-      scrollChat();
     }
   }
-
-
-  useEffect(() => {
-    if (
-      !externalAsk?.id ||
-      !planLoaded ||
-      busy ||
-      lastExternalAskRef.current ===
-        externalAsk.id
-    ) {
-      return;
-    }
-
-    lastExternalAskRef.current =
-      externalAsk.id;
-
-    const selectedText =
-      String(
-        externalAsk.text || ''
-      ).trim();
-
-    if (!selectedText) {
-      onExternalAskConsumed?.();
-      return;
-    }
-
-    const question =
-      `${selectedText}\n\nHelp me understand this selected text clearly.`;
-
-    setText(question);
-
-    send(
-      null,
-      externalAsk.mode ===
-        'advanced'
-        ? 'advanced'
-        : 'standard',
-      question,
-      selectedSuggestion?.sourceType === 'academic' ? 'user_prompt' : 'onstood_content'
-    );
-
-    onExternalAskConsumed?.();
-
-  }, [
-    externalAsk?.id,
-    planLoaded,
-    busy
-  ]);
-
 
   function buildSuggestionQuestion(item) {
     if (!item) return '';
@@ -887,7 +664,10 @@ export default function AI({
   const activeSuggestion = suggestions.length ? suggestions[suggestionIndex % suggestions.length] : null;
 
   return (
-    <Page eyebrow="INTELLIGENCE LAYER" title={<><OnstoodWordmark /> AI</>}>
+    <Page
+      eyebrow="INTELLIGENCE LAYER"
+      title={<><OnstoodWordmark /> <span style={{ color: '#111827' }}>AI</span></>}
+    >
       <style>{`
         .onstood-advanced-chip{
           width:190px; min-width:190px; min-height:48px; padding:0 14px;
@@ -1080,14 +860,14 @@ export default function AI({
 `}</style>
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="onstood-ai-suggested-bar" style={{ minHeight: 76, padding: '12px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 16 }}>
-          <div className="onstood-ai-suggested-label" style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY <OnstoodWordmark /> AI</div>
+          <div className="onstood-ai-suggested-label" style={{ fontSize: 11, fontWeight: 900, letterSpacing: 1.2, whiteSpace: 'nowrap' }}>✦ SUGGESTED BY ONSTOOD AI</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeSuggestion ? (
               <button type="button" onClick={() => chooseSuggestion(activeSuggestion)} key={`${activeSuggestion.kind}-${activeSuggestion.id || suggestionIndex}`} style={{ width: '100%', border: 0, background: 'transparent', padding: 0, display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn .35s ease', cursor: 'pointer', textAlign: 'left' }} title="Open this material with ONSTOOD AI">
                 <span style={{ padding: '5px 9px', borderRadius: 999, background: 'rgba(99,102,241,.09)', fontSize: 11, fontWeight: 800 }}>{activeSuggestion.kind}</span>
                 <div style={{ minWidth: 0 }}><b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSuggestion.title}</b><small className="muted">{activeSuggestion.meta}</small></div>
               </button>
-            ) : <small className="muted">Suggestions will appear here from <OnstoodWordmark /> content available to you.</small>}
+            ) : <small className="muted">Suggestions will appear here from ONSTOOD content available to you.</small>}
           </div>
           {suggestions.length > 1 && <small className="muted">{suggestionIndex + 1}/{suggestions.length}</small>}
         </div>
@@ -1095,7 +875,7 @@ export default function AI({
         {selectedSuggestion && (
           <div style={{ padding: '10px 18px', borderBottom: '1px solid rgba(0,0,0,.08)', display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(99,102,241,.035)' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <small className="muted" style={{ display: 'block', fontWeight: 800 }}>SELECTED <OnstoodWordmark /> MATERIAL</small>
+              <small className="muted" style={{ display: 'block', fontWeight: 800 }}>SELECTED ONSTOOD MATERIAL</small>
               <b style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedSuggestion.title}</b>
             </div>
             <div
@@ -1125,7 +905,7 @@ export default function AI({
                 <span className="onstood-global-selection-flow" />
                 <span className="onstood-global-selection-led" />
                 <span className="onstood-global-selection-label">
-                  ASK <OnstoodWordmark /> AI
+                  ASK ONSTOOD AI
                 </span>
               </button>
 
@@ -1146,13 +926,13 @@ export default function AI({
                 title={
                   isPro
                     ? 'Ask Advanced ONSTOOD AI about this material'
-                    : 'Advanced AI requires ONSTOOD PRO'
+                    : 'Advanced AI requires the Advanced plan'
                 }
               >
                 <span className="onstood-global-selection-flow" />
                 <span className="onstood-global-selection-led" />
                 <span className="onstood-global-selection-label">
-                  ASK ADVANCED <OnstoodWordmark /> AI
+                  ASK ADVANCED ONSTOOD AI
                 </span>
               </button>
             </div>
@@ -1386,22 +1166,10 @@ export default function AI({
             }}
           >
             <div
-              className="onstood-ai-messages onstood-ai-copy-protected"
-              onCopy={event => event.preventDefault()}
-              onCut={event => event.preventDefault()}
-              onContextMenu={event => event.preventDefault()}
-              onDragStart={event => event.preventDefault()}
-              style={{
-                flex: 1,
-                padding: 18,
-                overflowY: 'auto',
-                maxHeight: 520,
-                userSelect: 'text',
-                WebkitUserSelect: 'text',
-                WebkitTouchCallout: 'none'
-              }}
+              className="onstood-ai-messages"
+              style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
             >
-              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask <OnstoodWordmark /> AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
+              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
               {messages.map(message => (
                 <div key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
                   {message.role === 'assistant' && message.mode === 'advanced' && <small style={{ display: 'block', marginBottom: 5, fontWeight: 900 }}>✦ ADVANCED AI</small>}
@@ -1483,12 +1251,12 @@ export default function AI({
                     <Sparkles size={14} />
                     {isPro
                       ? 'Use Advanced ONSTOOD AI'
-                      : 'Advanced ONSTOOD AI · PRO'}
+                      : 'Advanced AI · €16.99/month'}
                   </button>
                 </div>
               )}
 
-              {busy && <div className="bubble"><Sparkles size={15} /> <OnstoodWordmark /> AI is thinking…</div>}
+              {busy && <div className="bubble"><Sparkles size={15} /> <OnstoodWordmark /> <span>AI is thinking…</span></div>}
               <div ref={chatEndRef} />
             </div>
 
@@ -1498,18 +1266,31 @@ export default function AI({
             >
               <div
                 className="onstood-ai-usage-row"
-                style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8 }}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}
               >
                 <small className="muted">Free {standardLeft}/{plan.standard_limit} · Advanced {advancedLeft}/{plan.advanced_limit} · refresh 12:00 PM</small>
-                <small className="muted">Enter = Ask AI</small>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {!isPro && (
+                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={startAdvancedCheckout} style={{ fontSize: 11, padding: '5px 9px' }}>
+                      {billingBusy ? 'Opening PayPal…' : 'Upgrade · €16.99/month'}
+                    </button>
+                  )}
+                  {plan.plan_code === 'advanced' && (
+                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={cancelAdvancedRenewal} style={{ fontSize: 11, padding: '5px 9px' }}>
+                      Cancel renewal
+                    </button>
+                  )}
+                  <small className="muted">Enter = Ask AI</small>
+                </div>
               </div>
+              {billingNotice && <small className="muted" style={{ display: 'block', margin: '-2px 0 8px' }}>{billingNotice}</small>}
               <form
                 className="onstood-ai-composer"
                 onSubmit={event => send(event, 'standard')}
                 style={{ display: 'flex', alignItems: 'stretch', gap: 10 }}
               >
                 <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                  {!text && (
+                  {!text && !busy && (
                     <div
                       aria-hidden="true"
                       style={{
@@ -1517,15 +1298,17 @@ export default function AI({
                         inset: 0,
                         display: 'flex',
                         alignItems: 'center',
-                        paddingLeft: 14,
-                        paddingRight: 14,
+                        gap: 4,
+                        padding: '0 14px',
                         pointerEvents: 'none',
                         fontSize: 15,
-                        color: 'var(--muted)',
-                        zIndex: 2
+                        color: '#6b7280',
+                        zIndex: 1
                       }}
                     >
-                      Ask&nbsp;<OnstoodWordmark />&nbsp;AI
+                      <span>Ask</span>
+                      <OnstoodWordmark style={{ fontWeight: 800 }} />
+                      <span>AI</span>
                     </div>
                   )}
                   <input
@@ -1533,18 +1316,10 @@ export default function AI({
                     autoFocus
                     value={text}
                     onChange={e => setText(e.target.value)}
-                    placeholder=""
                     aria-label="Ask OnStood AI"
+                    placeholder=""
                     disabled={busy}
-                    style={{
-                      width: '100%',
-                      minHeight: 48,
-                      fontSize: 15,
-                      boxSizing: 'border-box',
-                      position: 'relative',
-                      zIndex: 1,
-                      background: 'transparent'
-                    }}
+                    style={{ width: '100%', minHeight: 48, fontSize: 15, position: 'relative', zIndex: 2, background: 'transparent' }}
                   />
                 </div>
                 <button
@@ -1587,22 +1362,6 @@ export default function AI({
           </section>
         </div>
       </div>
-
-      <style>{`
-        .onstood-ai-copy-protected,
-        .onstood-ai-copy-protected * {
-          -webkit-user-select: text !important;
-          user-select: text !important;
-          -webkit-touch-callout: none !important;
-        }
-
-        .onstood-ai-copy-protected img,
-        .onstood-ai-copy-protected video,
-        .onstood-ai-copy-protected a {
-          -webkit-user-drag: none !important;
-          user-drag: none !important;
-        }
-      `}</style>
 
     </Page>
   );
