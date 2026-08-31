@@ -70,6 +70,7 @@ export default function AI({
   const [usage, setUsage] = useState({ standard_count: 0, advanced_count: 0 });
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingNotice, setBillingNotice] = useState('');
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [historySearch, setHistorySearch] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
@@ -89,7 +90,7 @@ export default function AI({
   const advancedLeft = Math.max(0, Number(plan.advanced_limit || 0) - Number(usage.advanced_count || 0));
   const isPro = Number(plan.advanced_limit || 0) > 0;
 
-  async function startAdvancedCheckout() {
+  async function startAdvancedCheckout(planCode = 'advanced') {
     if (billingBusy) return;
     setBillingBusy(true);
     setBillingNotice('');
@@ -99,13 +100,14 @@ export default function AI({
       const { data, error } = await supabase.functions.invoke('onstood-paypal-create-subscription', {
         body: {
           return_url: `${origin}${basePath}?paypal=success`,
-          cancel_url: `${origin}${basePath}?paypal=cancelled`
+          cancel_url: `${origin}${basePath}?paypal=cancelled`,
+          plan_code: planCode
         }
       });
       if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Checkout could not be started.');
       if (data?.already_active) {
         await loadUsage();
-        setBillingNotice('Advanced is already active on your account.');
+        setBillingNotice(`${planCode === 'pro' ? 'Pro' : 'Advanced'} is already active on your account.`);
         return;
       }
       if (!data?.approval_url) throw new Error('PayPal did not return an approval link.');
@@ -1270,9 +1272,9 @@ export default function AI({
               >
                 <small className="muted">Free {standardLeft}/{plan.standard_limit} · Advanced {advancedLeft}/{plan.advanced_limit} · refresh 12:00 PM</small>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  {!isPro && (
-                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={startAdvancedCheckout} style={{ fontSize: 11, padding: '5px 9px' }}>
-                      {billingBusy ? 'Opening PayPal…' : 'Upgrade · €16.99/month'}
+                  {plan.plan_code !== 'pro' && (
+                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(true)} style={{ fontSize: 11, padding: '5px 9px' }}>
+                      Upgrade OnStood AI
                     </button>
                   )}
                   {plan.plan_code === 'advanced' && (
@@ -1283,6 +1285,38 @@ export default function AI({
                   <small className="muted">Enter = Ask AI</small>
                 </div>
               </div>
+              {upgradeOpen && (
+                <div role="dialog" aria-modal="true" aria-label="Upgrade OnStood AI" onMouseDown={e => { if (e.target === e.currentTarget && !billingBusy) setUpgradeOpen(false); }} style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.48)', display:'grid', placeItems:'center', padding:16 }}>
+                  <div className="card" style={{ width:'min(980px, 100%)', maxHeight:'88vh', overflowY:'auto', padding:22, borderRadius:20 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', marginBottom:16 }}>
+                      <div><h2 style={{margin:0}}>Upgrade <OnstoodWordmark /> AI</h2><div className="muted" style={{marginTop:5}}>Choose the plan that fits your study needs.</div></div>
+                      <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(false)}>Close</button>
+                    </div>
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:14 }}>
+                      {[
+                        {code:'advanced', title:'Advanced', price:'€16.99 / month', total:'Total: up to 15 AI questions per day', points:[['10 Advanced AI questions every day','For deeper analysis, complex problems and advanced study support.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
+                        {code:'pro', title:'Pro', price:'€49.99 / month', total:'Total: up to 35 AI questions per day', points:[['30 Advanced AI questions every day','For intensive study, deeper analysis and complex academic work.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
+                        {code:'unlimited', title:'Unlimited', price:'Coming soon...', total:'Unlimited Advanced AI questions', points:[['Unlimited Advanced AI questions','Built for the highest level of study and research use.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Advanced study and research support',''],['Fair-use and anti-abuse protections will apply','']]}
+                      ].map(item => (
+                        <div key={item.code} style={{ border:'1px solid rgba(0,0,0,.10)', borderRadius:16, padding:17, display:'flex', flexDirection:'column', gap:12 }}>
+                          <div><div style={{fontWeight:850,fontSize:19}}><OnstoodWordmark /> {item.title}</div><div style={{fontWeight:800,fontSize:17,marginTop:5}}>{item.price}</div></div>
+                          {item.points.map(([a,b],i)=><div key={i}><div style={{fontWeight:750}}>✓ {a}</div>{b && <div className="muted" style={{fontSize:12,marginTop:3}}>{b}</div>}</div>)}
+                          <div style={{fontWeight:850,marginTop:'auto'}}>{item.total}</div>
+                          {item.code === 'unlimited' ? (
+                            <button type="button" className="btn subtle" disabled>Coming soon</button>
+                          ) : (
+                            <div style={{display:'grid',gap:7}}>
+                              <button type="button" className="btn primary" disabled={billingBusy} onClick={() => startAdvancedCheckout(item.code)}>{billingBusy ? 'Opening payment…' : 'Continue to PayPal'}</button>
+                              <button type="button" className="btn subtle" disabled title="Debit/Credit Card checkout infrastructure prepared; activation follows provider eligibility.">Debit / Credit Card · Coming soon</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(false)} style={{marginTop:16}}>Cancel</button>
+                  </div>
+                </div>
+              )}
               {billingNotice && <small className="muted" style={{ display: 'block', margin: '-2px 0 8px' }}>{billingNotice}</small>}
               <form
                 className="onstood-ai-composer"

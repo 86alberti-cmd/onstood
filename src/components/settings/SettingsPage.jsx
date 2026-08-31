@@ -619,7 +619,29 @@ export default function SettingsPage({
   const [feedbackBusy, setFeedbackBusy] =
     useState(false);
 
+  const [blockedPeople, setBlockedPeople] = useState([]);
+  const [unblockingId, setUnblockingId] = useState(null);
+  const [blockedListOpen, setBlockedListOpen] = useState(false);
 
+
+
+  async function loadBlockedPeople() {
+    const { data, error } = await supabase.rpc('list_blocked_people');
+    if (error) { console.error('Blocked people load error:', error); return; }
+    setBlockedPeople(data || []);
+  }
+
+  async function unblockPerson(person) {
+    if (!person?.user_id || unblockingId) return;
+    const label = `${person.name || 'this person'} ${person.surname || ''}`.trim();
+    if (!window.confirm(`Unblock ${label}? You will not be able to block this person again for 30 days.`)) return;
+    setUnblockingId(person.user_id);
+    const { error } = await supabase.rpc('unblock_user', { p_user_id: person.user_id });
+    setUnblockingId(null);
+    if (error) { notify(error.message); return; }
+    setBlockedPeople(current => current.filter(item => item.user_id !== person.user_id));
+    notify(`${label} unblocked. You cannot block this person again for 30 days.`);
+  }
 
   useEffect(() => {
 
@@ -729,6 +751,7 @@ export default function SettingsPage({
 
     loadSettings();
     loadDeleteAuthMode();
+    loadBlockedPeople();
 
     return () => {
       active = false;
@@ -1361,6 +1384,45 @@ export default function SettingsPage({
           </div>
         </section>
 
+
+        <section className="card">
+          <div className="card-head">
+            <div>
+              <h3>Blocked people</h3>
+              <small className="muted">Manage people you have blocked without filling the Settings page with a long list.</small>
+            </div>
+            <ShieldCheck size={19} />
+          </div>
+
+          <button
+            type="button"
+            className="btn subtle"
+            onClick={() => setBlockedListOpen(open => !open)}
+            aria-expanded={blockedListOpen}
+            style={{ width:'100%', justifyContent:'space-between' }}
+          >
+            <span>Blocked people list{blockedPeople.length ? ` (${blockedPeople.length})` : ''}</span>
+            <span aria-hidden="true">{blockedListOpen ? '−' : '+'}</span>
+          </button>
+
+          {blockedListOpen && (
+            <div style={{ marginTop:12 }}>
+              {blockedPeople.length === 0 ? (
+                <div className="empty compact">No blocked people.</div>
+              ) : (
+                <div style={{ display:'grid', gap:8, maxHeight:360, overflowY:'auto', paddingRight:4 }}>
+                  {blockedPeople.map(person => (
+                    <div key={person.user_id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, padding:'10px 0', borderBottom:'1px solid rgba(15,23,42,.08)' }}>
+                      <div><b>{person.name || 'Student'} {person.surname || ''}</b><small className="muted" style={{display:'block'}}>Blocked</small></div>
+                      <button type="button" className="btn subtle" disabled={unblockingId === person.user_id} onClick={() => unblockPerson(person)}>{unblockingId === person.user_id ? 'Unblocking…' : 'Unblock'}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <small className="muted" style={{ display:'block', marginTop:12 }}>Important: after you unblock someone, you cannot block that same person again for 30 days.</small>
+            </div>
+          )}
+        </section>
 
         <section className="card">
           <div className="card-head">

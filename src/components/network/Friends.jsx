@@ -97,6 +97,7 @@ export default function Friends({
     useState(null);
 
   const [followingIds, setFollowingIds] = useState([]);
+  const [blockingId, setBlockingId] = useState(null);
 
   async function loadFollowingIds() {
     const { data, error } = await supabase
@@ -443,6 +444,90 @@ export default function Friends({
 
 
   /* -------------------------------------------------------
+     CANCEL OUTGOING REQUEST
+     ------------------------------------------------------- */
+
+  async function cancelRequest(
+    receiverId
+  ) {
+
+    if (
+      !profile?.id ||
+      !receiverId
+    ) {
+      return;
+    }
+
+    const {
+      error
+    } = await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('sender_id', profile.id)
+      .eq('receiver_id', receiverId)
+      .eq('status', 'pending');
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setOutgoing(current =>
+      current.filter(item => item.receiver_id !== receiverId)
+    );
+
+    notify('Connection request cancelled.');
+
+  }
+
+
+  /* -------------------------------------------------------
+     UNFRIEND
+     ------------------------------------------------------- */
+
+  async function unfriendPerson(person) {
+    if (!person?.id || !profile?.id) {
+      return;
+    }
+
+    const connection = connections.find(item =>
+      item.status === 'accepted' &&
+      (
+        (item.sender_id === profile.id && item.receiver_id === person.id) ||
+        (item.receiver_id === profile.id && item.sender_id === person.id)
+      )
+    );
+
+    if (!connection?.id) {
+      notify('Connection could not be found.');
+      return;
+    }
+
+    const label = `${person.name || 'this person'} ${person.surname || ''}`.trim();
+    if (!window.confirm(`Remove ${label} from your connections? Your chat history will not be deleted.`)) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('id', connection.id)
+      .eq('status', 'accepted');
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConnections(current =>
+      current.filter(item => item.id !== connection.id)
+    );
+
+    notify(`${label} removed from your connections.`);
+  }
+
+
+  /* -------------------------------------------------------
      ACCEPT
      ------------------------------------------------------- */
 
@@ -736,6 +821,22 @@ export default function Friends({
     }
   }
 
+  async function blockPerson(person) {
+    if (!person?.id || blockingId) return;
+    const label = `${person.name || 'this person'} ${person.surname || ''}`.trim();
+    if (!window.confirm(`Block ${label}? You will become invisible to each other on OnStood.`)) return;
+    setBlockingId(person.id);
+    const { error } = await supabase.rpc('block_user', { p_user_id: person.id });
+    setBlockingId(null);
+    if (error) { notify(error.message); return; }
+    setPeople(current => current.filter(item => item.id !== person.id));
+    setConnections(current => current.filter(item => item.sender_id !== person.id && item.receiver_id !== person.id));
+    setRequests(current => current.filter(item => item.sender_id !== person.id));
+    setOutgoing(current => current.filter(item => item.receiver_id !== person.id));
+    setSelectedPerson(null);
+    notify(`${label} blocked.`);
+  }
+
   /* -------------------------------------------------------
      PUBLIC PROFILE
      ------------------------------------------------------- */
@@ -760,8 +861,7 @@ export default function Friends({
       );
 
     const canChat =
-      status === 'connected' &&
-      isOnline;
+      status === 'connected';
 
 
     return (
@@ -958,9 +1058,9 @@ export default function Friends({
             <button
               type="button"
               className="btn subtle"
-              disabled
+              onClick={() => cancelRequest(person.id)}
             >
-              Request sent
+              Cancel request
             </button>
 
           )}
@@ -968,13 +1068,23 @@ export default function Friends({
 
           {status === 'connected' && (
 
-            <button
-              type="button"
-              className="btn subtle"
-              disabled
-            >
-              Connected ✓
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn subtle"
+                disabled
+              >
+                Connected ✓
+              </button>
+
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() => unfriendPerson(person)}
+              >
+                Unfriend
+              </button>
+            </>
 
           )}
 
@@ -1048,20 +1158,6 @@ export default function Friends({
 
           <button
             type="button"
-            className="btn subtle"
-            onClick={() =>
-              openPostComposer(
-                person
-              )
-            }
-          >
-            <Mail size={16} />
-            Send a post to {person.name || 'student'}
-          </button>
-
-
-          <button
-            type="button"
             className={
               canChat
                 ? 'btn primary'
@@ -1072,10 +1168,8 @@ export default function Friends({
             }
             title={
               status !== 'connected'
-                ? 'Live chat is available between accepted connections.'
-                : !isOnline
-                  ? `${person.name || 'This student'} is offline. Send a private post instead.`
-                  : `Chat live with ${person.name || 'student'}`
+                ? 'Chat is available between accepted connections.'
+                : `Chat with ${person.name || 'student'}${isOnline ? '' : ' (offline)'}`
             }
             onClick={() =>
               onOpenChat?.(
@@ -1085,22 +1179,16 @@ export default function Friends({
           >
             <MessageCircle size={16} />
 
-            {isOnline &&
-            status === 'connected'
+            {status === 'connected'
               ? `Chat with ${person.name || 'student'}`
-              : `${person.name || 'Student'} is offline`}
+              : 'Chat unavailable'}
           </button>
 
 
-          <span
-            className="muted"
-            style={{
-              width: '100%',
-              fontSize: 12
-            }}
-          >
-            Private posts can be sent at any time. Live chat is available only when an accepted connection is online.
-          </span>
+          <button type="button" className="btn subtle" disabled={blockingId === person.id} onClick={() => blockPerson(person)} style={{ color: '#b91c1c' }}>
+            {blockingId === person.id ? 'Blocking…' : `Block ${person.name || 'person'}`}
+          </button>
+          <span className="muted" style={{ width: '100%', fontSize: 12 }}>Messages are delivered even when a connection is offline.</span>
 
         </div>
 
@@ -1422,6 +1510,33 @@ export default function Friends({
 
       {!selectedPerson && (
         <>
+          {requests.length > 0 && (
+            <section style={{ marginBottom: 22 }}>
+              <div className="section-heading">
+                <div>
+                  <h3 style={{ marginBottom: 2 }}>Friend requests</h3>
+                  <small className="muted">{requests.length} new {requests.length === 1 ? 'request' : 'requests'}</small>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {requests.map(request => {
+                  const person = people.find(item => item.id === request.sender_id);
+                  if (!person) return null;
+                  return (
+                    <div key={request.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+                      <button type="button" onClick={() => openProfile(person)} style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer' }}><Avatar profile={person} /></button>
+                      <button type="button" onClick={() => openProfile(person)} style={{ border: 0, background: 'transparent', textAlign: 'left', padding: 0, cursor: 'pointer', flex: 1 }}>
+                        <b>{person.name || 'Student'} {person.surname || ''}</b>
+                        <small className="muted" style={{ display: 'block' }}>{person.university || ''}{person.degree ? ` · ${person.degree}` : ''}</small>
+                      </button>
+                      <button type="button" className="btn primary" onClick={() => accept(request.id)}>Accept</button>
+                      <button type="button" className="btn subtle" onClick={() => decline(request.id)}>Decline</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           <section>
             <div
               className="section-heading"

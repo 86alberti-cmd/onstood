@@ -740,6 +740,12 @@ export function Documents({
   notify
 }) {
 
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [activeLibrary, setActiveLibrary] = useState(null);
+  const [libraries, setLibraries] = useState([]);
+  const [newLibraryOpen, setNewLibraryOpen] = useState(false);
+  const [newLibraryName, setNewLibraryName] = useState('');
+  const [savingLibrary, setSavingLibrary] = useState(false);
   const [docs, setDocs] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -766,27 +772,22 @@ export function Documents({
 
       try {
 
-        const {
-          data,
-          error
-        } = await supabase
-          .from('documents')
-          .select('*')
-          .eq(
-            'user_id',
-            profile.id
-          )
-          .order(
-            'created_at',
-            {
-              ascending: false
-            }
-          );
+        const [documentsResult, librariesResult] = await Promise.all([
+          supabase
+            .from('documents')
+            .select('*')
+            .eq('user_id', profile.id)
+            .order('created_at', { ascending: false }),
+          supabase
+            .from('user_libraries')
+            .select('id,user_id,name,created_at')
+            .eq('user_id', profile.id)
+            .order('created_at', { ascending: true })
+        ]);
 
-
-        if (error) {
-          throw error;
-        }
+        const { data, error } = documentsResult;
+        if (error) throw error;
+        if (librariesResult.error) throw librariesResult.error;
 
 
         if (!active) {
@@ -804,6 +805,7 @@ export function Documents({
 
 
         setDocs(safeDocs);
+        setLibraries(Array.isArray(librariesResult.data) ? librariesResult.data : []);
 
       } catch (error) {
 
@@ -835,7 +837,9 @@ export function Documents({
     loadDocuments();
 
 
-    return () => {
+
+
+  return () => {
       active = false;
     };
 
@@ -1027,7 +1031,8 @@ export function Documents({
             'application/octet-stream',
           visibility: uploadVisibility,
           knowledge_consent: uploadKnowledgeConsent,
-          ai_opt_in: uploadKnowledgeConsent
+          ai_opt_in: uploadKnowledgeConsent,
+          library_id: activeLibrary?.id || null
         })
         .select()
         .single();
@@ -1338,15 +1343,116 @@ export function Documents({
   }
 
 
+  async function createLibrary() {
+    const name = newLibraryName.trim();
+    if (!name || savingLibrary) return;
+    if (name.length > 80) {
+      notify('Library name must be 80 characters or less.');
+      return;
+    }
+
+    setSavingLibrary(true);
+    const { data, error } = await supabase
+      .from('user_libraries')
+      .insert({ user_id: profile.id, name })
+      .select('id,user_id,name,created_at')
+      .single();
+    setSavingLibrary(false);
+
+    if (error) {
+      notify(error.code === '23505' ? 'You already have a library with this name.' : error.message);
+      return;
+    }
+
+    setLibraries(current => [...current, data]);
+    setNewLibraryName('');
+    setNewLibraryOpen(false);
+    notify('Library created.');
+  }
+
+  function openLibrary(library = null) {
+    setActiveLibrary(library);
+    setLibraryOpen(true);
+  }
+
+  const visibleDocs = docs.filter(item =>
+    activeLibrary
+      ? item.library_id === activeLibrary.id
+      : !item.library_id
+  );
+
+
+  if (!libraryOpen) {
+    return (
+      <Page eyebrow="YOUR SPACE" title="My Library">
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:14 }}>
+          <button type="button" className="card" onClick={() => openLibrary(null)} style={{ padding:22, textAlign:'left', cursor:'pointer', border:'1px solid rgba(15,23,42,.08)', background:'#fff' }}>
+            <div style={{ fontSize:13, fontWeight:800, marginBottom:8 }}>YOUR MAIN LIBRARY</div>
+            <h3 style={{ margin:'0 0 6px' }}><OnstoodWordmark /> Library</h3>
+            <div className="muted">Open your documents and upload new study material.</div>
+          </button>
+
+          {libraries.map(library => (
+            <button
+              type="button"
+              className="card"
+              key={library.id}
+              onClick={() => openLibrary(library)}
+              style={{ padding:22, textAlign:'left', cursor:'pointer', border:'1px solid rgba(15,23,42,.08)', background:'#fff' }}
+            >
+              <div style={{ fontSize:13, fontWeight:800, marginBottom:8 }}>PERSONAL LIBRARY</div>
+              <h3 style={{ margin:'0 0 6px' }}>{library.name}</h3>
+              <div className="muted">{docs.filter(item => item.library_id === library.id).length} document(s)</div>
+            </button>
+          ))}
+
+          {!newLibraryOpen ? (
+            <button
+              type="button"
+              className="card"
+              onClick={() => setNewLibraryOpen(true)}
+              style={{ padding:22, textAlign:'left', cursor:'pointer', border:'1px dashed rgba(15,23,42,.22)', background:'#fff' }}
+            >
+              <div style={{ fontSize:24, marginBottom:6 }}>＋</div>
+              <h3 style={{ margin:'0 0 6px' }}>New Library</h3>
+              <div className="muted">Create another personal library.</div>
+            </button>
+          ) : (
+            <div className="card" style={{ padding:22, border:'1px dashed rgba(15,23,42,.22)', background:'#fff' }}>
+              <h3 style={{ margin:'0 0 10px' }}>New Library</h3>
+              <input
+                autoFocus
+                value={newLibraryName}
+                maxLength={80}
+                placeholder="e.g. Session 2, Year I…"
+                onChange={event => setNewLibraryName(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') createLibrary(); }}
+                style={{ width:'100%', boxSizing:'border-box', padding:'10px 12px', borderRadius:10, border:'1px solid rgba(15,23,42,.16)', marginBottom:10 }}
+              />
+              <div style={{ display:'flex', gap:8 }}>
+                <button type="button" className="btn primary" disabled={!newLibraryName.trim() || savingLibrary} onClick={createLibrary}>
+                  {savingLibrary ? 'Saving…' : 'Save'}
+                </button>
+                <button type="button" className="btn subtle" disabled={savingLibrary} onClick={() => { setNewLibraryOpen(false); setNewLibraryName(''); }}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Page>
+    );
+  }
+
+
   return (
 
     <Page
       eyebrow="YOUR SPACE"
-      title="Documents"
+      title={activeLibrary?.name || 'OnStood Library'}
 
       action={
 
         <>
+          <button type="button" className="btn subtle" onClick={() => { setLibraryOpen(false); setActiveLibrary(null); }}>← My Library</button>
           <button
             type="button"
             className="btn primary upload-btn"
@@ -1742,7 +1848,7 @@ export function Documents({
           Loading documents…
         </div>
 
-      ) : docs.length === 0 ? (
+      ) : visibleDocs.length === 0 ? (
 
         <div className="empty">
           No documents yet.
@@ -1752,7 +1858,7 @@ export function Documents({
 
         <div className="doc-grid">
 
-          {docs.map(item => {
+          {visibleDocs.map(item => {
 
             const fileName =
               typeof item?.file_name === 'string' &&

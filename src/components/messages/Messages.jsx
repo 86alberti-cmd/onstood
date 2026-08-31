@@ -1772,6 +1772,8 @@ export function PostOffice({
 
   const [conversations, setConversations] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [acceptedContactIds, setAcceptedContactIds] = useState(new Set());
+  const [chatRequests, setChatRequests] = useState([]);
   const [selectedConversationId, setSelectedConversationId] =
     useState(requestedConversationId || null);
 
@@ -1794,6 +1796,14 @@ export function PostOffice({
   const [typingUserIds, setTypingUserIds] = useState([]);
   const [memberReadAt, setMemberReadAt] = useState({});
   const [search, setSearch] = useState('');
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [requestTargetUserId, setRequestTargetUserId] = useState(null);
+  const requestTargetUserIdRef = useRef(null);
+  const chatRequestChannelIdRef = useRef(createBrowserSafeId());
+
+  useEffect(() => {
+    requestTargetUserIdRef.current = requestTargetUserId;
+  }, [requestTargetUserId]);
 
   const [replyToMessage, setReplyToMessage] =
     useState(null);
@@ -1804,12 +1814,7 @@ export function PostOffice({
   const [inboxTab, setInboxTab] =
     useState('chats');
 
-  const [messageCategory, setMessageCategory] =
-    useState(
-      compact
-        ? 'chat'
-        : null
-    );
+  const [messageCategory, setMessageCategory] = useState('chat');
 
   const [conversationMenuOpen, setConversationMenuOpen] =
     useState(false);
@@ -2136,62 +2141,103 @@ export function PostOffice({
   }
 
   async function loadContacts() {
-
-    const {
-      data: accepted,
-      error
-    } = await supabase
-      .from('friend_requests')
-      .select('sender_id, receiver_id')
-      .eq('status', 'accepted')
-      .or(
-        `sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`
-      );
-
-    if (error) {
-      notify(error.message);
-      return;
-    }
-
-    const ids = [
-      ...new Set(
-        (accepted || []).map(item =>
-          item.sender_id === profile.id
-            ? item.receiver_id
-            : item.sender_id
-        )
-      )
-    ];
-
-    if (ids.length === 0) {
-      setContacts([]);
-      return;
-    }
-
-    const {
-      data: profiles,
-      error: profilesError
-    } = await supabase
-      .from('profiles')
-      .select(`
-        id,
-        name,
-        surname,
-        university,
-        degree,
-        avatar_url,
-        avatar_visibility
-      `)
-      .in('id', ids)
-      .order('name');
-
-    if (profilesError) {
-      notify(profilesError.message);
-      return;
-    }
-
-    setContacts(profiles || []);
+    const [acceptedResult, profilesResult, requestsResult] = await Promise.all([
+      supabase.from('friend_requests').select('sender_id,receiver_id').eq('status','accepted').or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`),
+      supabase.from('profiles').select(`id,name,surname,university,degree,avatar_url,avatar_visibility`).neq('id', profile.id).order('name').limit(150),
+      supabase.from('chat_requests').select('*').or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`).order('created_at',{ascending:false})
+    ]);
+    if (acceptedResult.error) { notify(acceptedResult.error.message); return; }
+    if (profilesResult.error) { notify(profilesResult.error.message); return; }
+    if (requestsResult.error) { notify(requestsResult.error.message); return; }
+    const ids = new Set((acceptedResult.data || []).map(item => item.sender_id === profile.id ? item.receiver_id : item.sender_id));
+    setAcceptedContactIds(ids);
+    setContacts(profilesResult.data || []);
+    setChatRequests(requestsResult.data || []);
   }
+
+  function chatRequestForUser(userId) {
+    return chatRequests.find(item =>
+      (item.sender_id === profile.id && item.receiver_id === userId) ||
+      (item.receiver_id === profile.id && item.sender_id === userId)
+    ) || null;
+  }
+
+  function canChatWithUser(userId) {
+    return acceptedContactIds.has(userId) ||
+      chatRequests.some(item =>
+        item.status === 'accepted' &&
+        (item.sender_id === userId || item.receiver_id === userId)
+      );
+  }
+
+  async function requestOrStartConversation(userId) {
+    if (!userId) return;
+
+    const existingConversation = conversations.find(
+      item => item.other_user_id === userId
+    );
+
+    setNewConversationOpen(false);
+    setSearch('');
+
+    if (!compact && typeof onOpenMiniChat === 'function') {
+      onOpenMiniChat(
+        userId,
+        existingConversation?.conversation_id || null
+      );
+      return;
+    }
+
+    if (existingConversation) {
+      setRequestTargetUserId(null);
+      setSelectedConversationId(existingConversation.conversation_id);
+      onConversationResolved?.(existingConversation.conversation_id);
+      return;
+    }
+
+    if (canChatWithUser(userId)) {
+      setRequestTargetUserId(null);
+      await startConversation(userId);
+      return;
+    }
+
+    // A non-connection opens the same chat shell, but no conversation
+    // is created until the chat request is accepted.
+    setSelectedConversationId(null);
+    setRequestTargetUserId(userId);
+  }
+
+  async function sendChatRequestToTarget(userId) {
+    if (!userId) return;
+    const existing = chatRequestForUser(userId);
+    if (existing?.status === 'pending') return;
+
+    const { error } = await supabase.rpc('send_chat_request', { p_user_id: userId });
+    if (error) { notify(error.message); return; }
+    notify('Chat request sent.');
+    await loadContacts();
+  }
+
+  async function respondChatRequest(requestId, accept) {
+    const { data, error } = await supabase.rpc('respond_chat_request', { p_request_id: requestId, p_accept: accept });
+    if (error) { notify(error.message); return; }
+    await loadContacts();
+    if (!accept) {
+      setRequestTargetUserId(null);
+      notify('Chat request declined.');
+      return;
+    }
+    await loadConversations();
+    notify('Chat request accepted.');
+    if (data) {
+      setRequestTargetUserId(null);
+      const request = chatRequests.find(item => item.id === requestId);
+      const otherId = request?.sender_id === profile.id ? request?.receiver_id : request?.sender_id;
+      if (!compact && typeof onOpenMiniChat === 'function') onOpenMiniChat(otherId, data);
+      else setSelectedConversationId(data);
+    }
+  }
+
 
 
   useEffect(() => {
@@ -2249,6 +2295,43 @@ export function PostOffice({
   }, [profile.id]);
 
 
+  useEffect(() => {
+    const channel = supabase
+      .channel(`chat-requests-${profile.id}-${chatRequestChannelIdRef.current}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_requests'
+        },
+        async payload => {
+          const row = payload.new?.id ? payload.new : payload.old;
+          if (!row) return;
+          if (row.sender_id !== profile.id && row.receiver_id !== profile.id) return;
+
+          await loadContacts();
+          const rows = await loadConversations();
+
+          const targetUserId = requestTargetUserIdRef.current;
+          if (targetUserId) {
+            const existing = rows.find(item => item.other_user_id === targetUserId);
+            if (existing) {
+              setRequestTargetUserId(null);
+              setSelectedConversationId(existing.conversation_id);
+              onConversationResolved?.(existing.conversation_id);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [profile.id]);
+
+
   /* -------------------------------------------------------
      START A DIRECT CONVERSATION
      ------------------------------------------------------- */
@@ -2291,38 +2374,36 @@ export function PostOffice({
 
   useEffect(() => {
 
-    if (!requestedUserId) {
+    if (!requestedUserId || loading) {
       return;
     }
 
-    /*
-     * Desktop keeps the established small floating MiniChat.
-     * Mobile has no onOpenMiniChat handler and therefore opens
-     * the conversation inside the mobile Messages screen.
-     */
-    if (
-      !compact &&
-      typeof onOpenMiniChat ===
-        'function'
-    ) {
-      onOpenMiniChat(
-        requestedUserId,
-        null
-      );
-      onConversationResolved?.(
-        null
-      );
-      return;
-    }
-
-    startConversation(
-      requestedUserId
+    const existingConversation = conversations.find(
+      item => item.other_user_id === requestedUserId
     );
+
+    if (existingConversation) {
+      setRequestTargetUserId(null);
+      setSelectedConversationId(existingConversation.conversation_id);
+      return;
+    }
+
+    if (canChatWithUser(requestedUserId)) {
+      setRequestTargetUserId(null);
+      startConversation(requestedUserId);
+      return;
+    }
+
+    // For non-friends the MiniChat opens as a request shell.
+    setSelectedConversationId(null);
+    setRequestTargetUserId(requestedUserId);
 
   }, [
     requestedUserId,
-    compact,
-    onOpenMiniChat
+    loading,
+    conversations,
+    acceptedContactIds,
+    chatRequests
   ]);
 
 
@@ -2749,14 +2830,7 @@ export function PostOffice({
       return;
     }
 
-    if (!isOtherOnline) {
 
-      notify(
-        'Live chat is available only while the other person is online. Send a private post from their profile instead.'
-      );
-
-      return;
-    }
 
     if (body.length > 4000) {
 
@@ -2904,14 +2978,7 @@ export function PostOffice({
       return;
     }
 
-    if (!isOtherOnline) {
 
-      notify(
-        'Attachments in live chat can be sent only while the other person is online.'
-      );
-
-      return;
-    }
 
     const maxSize =
       10 * 1024 * 1024;
@@ -3643,7 +3710,6 @@ export function PostOffice({
 
     if (
       !selectedConversationId ||
-      !isOtherOnline ||
       !url
     ) {
       return;
@@ -3755,11 +3821,7 @@ export function PostOffice({
 
   const filteredConversations =
     conversations
-      .filter(item =>
-        !item.archived &&
-        item.inbox_bucket ===
-          inboxTab
-      )
+      .filter(item => !item.archived && inboxTab === 'chats')
       .filter(item => {
 
         const haystack =
@@ -3771,9 +3833,7 @@ export function PostOffice({
           ${item.label || ''}
           `.toLowerCase();
 
-        return haystack.includes(
-          searchText
-        );
+        return true;
       })
       .sort((a, b) => {
         if (
@@ -3799,21 +3859,24 @@ export function PostOffice({
         );
       });
 
-  const conversationUserIds =
-    new Set(
-      conversations
-        .map(item =>
-          item.other_user_id
-        )
-        .filter(Boolean)
-    );
-
   const availableContacts =
-    contacts.filter(contact =>
-      !conversationUserIds.has(
-        contact.id
-      )
-    );
+    newConversationOpen && searchText
+      ? contacts.filter(contact =>
+          `${contact.name || ''} ${contact.surname || ''} ${contact.university || ''} ${contact.degree || ''}`
+            .toLowerCase()
+            .includes(searchText)
+        )
+      : [];
+
+  const requestTarget =
+    requestTargetUserId
+      ? contacts.find(contact => contact.id === requestTargetUserId) || null
+      : null;
+
+  const requestTargetChatRequest =
+    requestTargetUserId
+      ? chatRequestForUser(requestTargetUserId)
+      : null;
 
   const lastOwnMessage =
     [...messages]
@@ -3864,113 +3927,12 @@ export function PostOffice({
       hideHeading={compact}
       action={
         <span className="muted">
-          Private posts anytime · live chat when your connection is online.
+          Chat works whether your connection is online or offline.
         </span>
       }
     >
 
-      {!compact &&
-      !messageCategory && (
-        <div
-          className="onstood-message-category-grid"
-          style={{
-            display: 'grid',
-            gridTemplateColumns:
-              'repeat(2, minmax(0, 1fr))',
-            gap: 14,
-            marginBottom: 18
-          }}
-        >
-          <button
-            type="button"
-            className="card"
-            onClick={() =>
-              setMessageCategory(
-                'private'
-              )
-            }
-            style={{
-              padding: 20,
-              border:
-                '1px solid rgba(15,23,42,.08)',
-              background: '#fff',
-              cursor: 'pointer',
-              textAlign: 'left'
-            }}
-          >
-            <Mail size={24} />
-            <h3
-              style={{
-                margin:
-                  '10px 0 4px'
-              }}
-            >
-              Private posts
-            </h3>
-            <div className="muted">
-              Send now, read later. Open the latest conversation with each person.
-            </div>
-          </button>
-
-          <button
-            type="button"
-            className="card"
-            onClick={() =>
-              setMessageCategory(
-                'chat'
-              )
-            }
-            style={{
-              padding: 20,
-              border:
-                '1px solid rgba(15,23,42,.08)',
-              background: '#fff',
-              cursor: 'pointer',
-              textAlign: 'left'
-            }}
-          >
-            <Send size={24} />
-            <h3
-              style={{
-                margin:
-                  '10px 0 4px'
-              }}
-            >
-              Chat
-            </h3>
-            <div className="muted">
-              Live conversations with your connections.
-            </div>
-          </button>
-        </div>
-      )}
-
-      {!compact &&
-      messageCategory && (
-        <button
-          type="button"
-          className="btn subtle"
-          onClick={() => {
-            setMessageCategory(null);
-            setSelectedConversationId(null);
-          }}
-          style={{
-            marginBottom: 12
-          }}
-        >
-          ← Messages
-        </button>
-      )}
-
-      {!compact &&
-      messageCategory ===
-        'private' && (
-        <DirectPostsPanel
-          profile={profile}
-          notify={notify}
-        />
-      )}
-
+      {/* Messages is chat-only. Private Post has been retired. */}
 
       {(compact ||
         messageCategory ===
@@ -4076,27 +4038,85 @@ export function PostOffice({
           </div>
 
 
-          <div
-            className="search-box"
-            style={{
-              width: '100%',
-              marginBottom: 14
-            }}
-          >
+          {inboxTab === 'chats' && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewConversationOpen(current => !current);
+                  setSearch('');
+                }}
+                style={{
+                  width: '100%',
+                  border: 0,
+                  background: 'transparent',
+                  padding: '9px 4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 9,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontWeight: 800,
+                  marginBottom: newConversationOpen ? 7 : 12
+                }}
+              >
+                <span style={{ fontSize: 19, lineHeight: 1 }}>＋</span>
+                New conversation
+              </button>
 
-            <Search size={16} />
+              {newConversationOpen && (
+                <div
+                  className="search-box"
+                  style={{ width: '100%', marginBottom: 10 }}
+                >
+                  <Search size={16} />
+                  <input
+                    autoFocus
+                    placeholder="Search a person…"
+                    value={search}
+                    onChange={event => setSearch(event.target.value)}
+                  />
+                </div>
+              )}
 
-            <input
-              placeholder="Search messages…"
-              value={search}
-              onChange={event =>
-                setSearch(
-                  event.target.value
-                )
-              }
-            />
-
-          </div>
+              {newConversationOpen && searchText && (
+                <div style={{ marginBottom: 12 }}>
+                  {availableContacts.slice(0, 12).map(contact => {
+                    const isFriend = canChatWithUser(contact.id);
+                    return (
+                      <button
+                        type="button"
+                        key={contact.id}
+                        onClick={() => requestOrStartConversation(contact.id)}
+                        style={{
+                          width: '100%',
+                          border: 0,
+                          background: 'transparent',
+                          padding: '8px 4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 9,
+                          cursor: 'pointer',
+                          textAlign: 'left'
+                        }}
+                      >
+                        <Avatar profile={contact} />
+                        <span style={{ minWidth: 0, flex: 1 }}>
+                          <b>{contact.name || 'Student'} {contact.surname || ''}</b>
+                          <small className="muted" style={{ display: 'block' }}>
+                            {isFriend ? 'Connection · open chat' : 'Chat request required'}
+                          </small>
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {availableContacts.length === 0 && (
+                    <div className="empty compact">No people found.</div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
 
 
           {loading ? (
@@ -4108,6 +4128,17 @@ export function PostOffice({
           ) : (
 
             <>
+
+              {inboxTab === 'requests' && chatRequests.filter(item => item.receiver_id === profile.id && item.status === 'pending').map(request => {
+                const person = contacts.find(item => item.id === request.sender_id);
+                if (!person) return null;
+                return (
+                  <div key={request.id} className="card" style={{ padding: 10, marginBottom: 8 }}>
+                    <div style={{ display:'flex', gap:9, alignItems:'center' }}><Avatar profile={person}/><div><b>{person.name || 'Student'} {person.surname || ''}</b><small className="muted" style={{display:'block'}}>Chat request</small></div></div>
+                    <div style={{display:'flex',gap:7,marginTop:9}}><button type="button" className="btn primary" onClick={() => respondChatRequest(request.id,true)}>Accept</button><button type="button" className="btn subtle" onClick={() => respondChatRequest(request.id,false)}>Decline</button></div>
+                  </div>
+                );
+              })}
 
               {filteredConversations
                 .map(item => {
@@ -4342,78 +4373,6 @@ export function PostOffice({
               )}
 
 
-              {availableContacts.length >
-                0 && (
-
-                <div
-                  style={{
-                    marginTop: 20
-                  }}
-                >
-
-                  <div
-                    className="muted"
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      marginBottom: 8
-                    }}
-                  >
-                    START A CONVERSATION
-                  </div>
-
-                  {availableContacts
-                    .slice(0, 8)
-                    .map(contact => (
-
-                      <button
-                        type="button"
-                        key={contact.id}
-                        onClick={() =>
-                          startConversation(
-                            contact.id
-                          )
-                        }
-                        style={{
-                          width:
-                            '100%',
-                          border: 0,
-                          background:
-                            'transparent',
-                          padding:
-                            '8px 4px',
-                          display:
-                            'flex',
-                          alignItems:
-                            'center',
-                          gap: 9,
-                          cursor:
-                            'pointer',
-                          textAlign:
-                            'left'
-                        }}
-                      >
-
-                        <Avatar
-                          profile={
-                            contact
-                          }
-                        />
-
-                        <span>
-                          {contact.name ||
-                            'Student'}{' '}
-                          {contact.surname ||
-                            ''}
-                        </span>
-
-                      </button>
-
-                    ))}
-
-                </div>
-
-              )}
 
             </>
 
@@ -4431,7 +4390,8 @@ export function PostOffice({
             ================================================= */}
 
         {(compact ||
-          selectedConversation) && (
+          selectedConversation ||
+          requestTarget) && (
         <div
           ref={conversationCardRef}
           className="card postoffice-conversation-card"
@@ -4461,22 +4421,70 @@ export function PostOffice({
           }}
         >
 
-          {!selectedConversation ? (
+          {!selectedConversation && requestTarget ? (
+
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div
+                style={{
+                  padding: compact ? '10px 12px' : '16px 18px',
+                  borderBottom: '1px solid rgba(0,0,0,0.08)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12
+                }}
+              >
+                <Avatar profile={requestTarget} />
+                <div style={{ minWidth: 0 }}>
+                  <b>{requestTarget.name || 'Student'} {requestTarget.surname || ''}</b>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {requestTarget.university || requestTarget.degree || 'Student'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="empty" style={{ margin: 'auto', padding: 28, textAlign: 'center' }}>
+                {requestTargetChatRequest?.status === 'pending' ? (
+                  requestTargetChatRequest.sender_id === profile.id ? (
+                    <>
+                      <h3>Chat request pending</h3>
+                      <p>Waiting for {requestTarget.name || 'this person'} to accept or decline your request.</p>
+                      <button type="button" className="btn subtle" disabled>Request sent</button>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Chat request</h3>
+                      <p>{requestTarget.name || 'This person'} wants to chat with you.</p>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                        <button type="button" className="btn primary" onClick={() => respondChatRequest(requestTargetChatRequest.id, true)}>Accept</button>
+                        <button type="button" className="btn subtle" onClick={() => respondChatRequest(requestTargetChatRequest.id, false)}>Decline</button>
+                      </div>
+                    </>
+                  )
+                ) : (
+                  <>
+                    <h3>Send a chat request?</h3>
+                    <p>You are not connected yet. Messages become available only after the request is accepted.</p>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={() => sendChatRequestToTarget(requestTarget.id)}
+                    >
+                      Send chat request
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+          ) : !selectedConversation ? (
 
             <div
               className="empty"
-              style={{
-                margin: 'auto',
-                padding: 40
-              }}
+              style={{ margin: 'auto', padding: 40 }}
             >
               <Mail size={34} />
-              <h3>
-                Your <OnstoodWordmark /> Messages
-              </h3>
-              <p>
-                Select a conversation or start one with an accepted connection.
-              </p>
+              <h3>Your <OnstoodWordmark /> Messages</h3>
+              <p>Select a conversation or start a new one.</p>
             </div>
 
           ) : (
@@ -5312,8 +5320,7 @@ export function PostOffice({
                   title="Photo or video"
                   style={{
                     cursor:
-                      uploading ||
-                      !isOtherOnline
+                      uploading
                         ? 'default'
                         : 'pointer',
                     flexShrink: 0,
@@ -5337,8 +5344,7 @@ export function PostOffice({
                     type="file"
                     accept="image/*,video/*"
                     disabled={
-                      uploading ||
-                      !isOtherOnline
+                      uploading
                     }
                     onChange={
                       uploadAttachment
@@ -5360,8 +5366,7 @@ export function PostOffice({
                   title="Attach document"
                   style={{
                     cursor:
-                      uploading ||
-                      !isOtherOnline
+                      uploading
                         ? 'default'
                         : 'pointer',
                     flexShrink: 0,
@@ -5378,8 +5383,7 @@ export function PostOffice({
                     type="file"
                     accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.rtf,.odt,.ods,.odp,application/pdf"
                     disabled={
-                      uploading ||
-                      !isOtherOnline
+                      uploading
                     }
                     onChange={
                       uploadAttachment
@@ -5407,7 +5411,7 @@ export function PostOffice({
                     type="button"
                     className="icon-btn"
                     title="Emoji"
-                    disabled={!isOtherOnline}
+                    disabled={false}
                     onClick={() => {
                       setEmojiOpen(
                         current => !current
@@ -5486,7 +5490,7 @@ export function PostOffice({
                     type="button"
                     className="icon-btn"
                     title="Send GIF"
-                    disabled={!isOtherOnline}
+                    disabled={false}
                     onClick={() => {
                       setGifOpen(
                         current => !current
@@ -5566,18 +5570,17 @@ export function PostOffice({
                 <input
                   ref={messageInputRef}
                   placeholder={
-                    !isOtherOnline
-                      ? 'Offline — use Send a post from their profile'
-                      : uploading
-                        ? 'Uploading attachment…'
-                        : 'Write a live message…'
+                    uploading
+                      ? 'Uploading attachment…'
+                      : isOtherOnline
+                        ? 'Write a message…'
+                        : 'Write a message · recipient is offline'
                   }
                   value={text}
                   maxLength={4000}
                   disabled={
                     sending ||
-                    uploading ||
-                    !isOtherOnline
+                    uploading
                   }
                   onChange={event =>
                     updateText(
@@ -5612,7 +5615,6 @@ export function PostOffice({
                   disabled={
                     sending ||
                     uploading ||
-                    !isOtherOnline ||
                     !text.trim()
                   }
                 >

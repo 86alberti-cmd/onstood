@@ -366,101 +366,75 @@ export default function HomePage({
 
     setSuggestionsLoading(true);
 
-    const {
-      data: relationshipRows,
-      error: relationshipError
-    } = await supabase
+    const { data: relationshipRows, error: relationshipError } = await supabase
       .from('friend_requests')
-      .select(
-        'sender_id,receiver_id,status'
-      )
-      .or(
-        `sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`
-      );
+      .select('sender_id,receiver_id,status')
+      .or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`);
 
     if (relationshipError) {
-      console.error(
-        'Home suggestions relationship error:',
-        relationshipError
-      );
+      console.error('Home suggestions relationship error:', relationshipError);
       setSuggestionsLoading(false);
       return;
     }
 
-    const excludedIds =
-      new Set([profile.id]);
+    const excludedIds = new Set([profile.id]);
+    const friendIds = [];
+    (relationshipRows || []).forEach(item => {
+      const otherId = item.sender_id === profile.id ? item.receiver_id : item.sender_id;
+      if (item.status === 'accepted' || item.status === 'pending') excludedIds.add(otherId);
+      if (item.status === 'accepted') friendIds.push(otherId);
+    });
 
-    (relationshipRows || []).forEach(
-      item => {
-        if (
-          item.status === 'accepted' ||
-          item.status === 'pending'
-        ) {
-          excludedIds.add(
-            item.sender_id === profile.id
-              ? item.receiver_id
-              : item.sender_id
-          );
-        }
+    let fofIds = new Set();
+    if (friendIds.length) {
+      const { data: fofRows, error: fofError } = await supabase
+        .from('friend_requests')
+        .select('sender_id,receiver_id')
+        .eq('status', 'accepted')
+        .or(`sender_id.in.(${friendIds.join(',')}),receiver_id.in.(${friendIds.join(',')})`);
+      if (!fofError) {
+        (fofRows || []).forEach(row => {
+          if (friendIds.includes(row.sender_id) && !excludedIds.has(row.receiver_id)) fofIds.add(row.receiver_id);
+          if (friendIds.includes(row.receiver_id) && !excludedIds.has(row.sender_id)) fofIds.add(row.sender_id);
+        });
       }
-    );
+    }
 
-    const {
-      data: profileRows,
-      error: profileError
-    } = await supabase
-      .from('profiles')
-      .select(`
-        id,
-        name,
-        surname,
-        university,
-        degree,
-        avatar_url
-      `)
-      .neq('id', profile.id)
-      .limit(100);
-
+    const candidateIds = [...fofIds];
+    let profileQuery = supabase.from('profiles').select(`id,name,surname,university,degree,avatar_url`).neq('id', profile.id).limit(150);
+    const { data: profileRows, error: profileError } = await profileQuery;
     if (profileError) {
-      console.error(
-        'Home suggestions profile error:',
-        profileError
-      );
+      console.error('Home suggestions profile error:', profileError);
       setSuggestionsLoading(false);
       return;
     }
 
-    const candidates =
-      (profileRows || [])
-        .filter(person =>
-          !excludedIds.has(person.id)
-        );
+    const candidates = (profileRows || []).filter(person => !excludedIds.has(person.id));
+    const shuffle = list => {
+      const copy = [...list];
+      for (let i = copy.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    };
 
-    /* Shuffle once when loaded. The visible window rotates
-       every 10 seconds below without re-querying Supabase. */
-    const shuffled =
-      [...candidates];
+    const fof = shuffle(candidates.filter(person => fofIds.has(person.id)));
+    const myDegree = String(profile.degree || '').trim().toLowerCase();
+    const sameDegree = shuffle(candidates.filter(person => !fofIds.has(person.id) && myDegree && String(person.degree || '').trim().toLowerCase() === myDegree));
+    const other = shuffle(candidates.filter(person => !fofIds.has(person.id) && !sameDegree.some(match => match.id === person.id)));
 
-    for (
-      let index = shuffled.length - 1;
-      index > 0;
-      index -= 1
-    ) {
-      const randomIndex =
-        Math.floor(
-          Math.random() * (index + 1)
-        );
+    /* Target mix: ~90% friends-of-friends, ~10% same study degree.
+       Only use general fallback when one of those pools cannot fill the list. */
+    const target = Math.min(30, candidates.length);
+    const fofTarget = Math.ceil(target * 0.9);
+    const degreeTarget = Math.max(0, target - fofTarget);
+    const selected = [...fof.slice(0, fofTarget), ...sameDegree.slice(0, degreeTarget)];
+    const selectedIds = new Set(selected.map(item => item.id));
+    const fallback = [...fof.slice(fofTarget), ...sameDegree.slice(degreeTarget), ...other].filter(item => !selectedIds.has(item.id));
+    const mixed = shuffle([...selected, ...fallback.slice(0, Math.max(0, target - selected.length))]);
 
-      [
-        shuffled[index],
-        shuffled[randomIndex]
-      ] = [
-        shuffled[randomIndex],
-        shuffled[index]
-      ];
-    }
-
-    setPeopleSuggestions(shuffled);
+    setPeopleSuggestions(mixed);
     setSuggestionOffset(0);
     setSuggestionsLoading(false);
   }
@@ -2289,13 +2263,13 @@ export default function HomePage({
         />
 
         <Stat
-          label="Documents"
+          label="My Library"
           value={
             overviewLoading
               ? '…'
               : overview.documents
           }
-          onClick={() => go('documents')}
+          onClick={() => go('docs')}
         />
       </div>
 

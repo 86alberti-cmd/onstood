@@ -287,7 +287,7 @@ export default function AppNavigation({
                 [
                   'docs',
                   FileText,
-                  'Documents'
+                  'My Library'
                 ],
                 [
                   'courses',

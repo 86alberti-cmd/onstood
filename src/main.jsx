@@ -170,7 +170,7 @@ const NAV = [
   ['messages', 'Messages', Mail],
   ['calendar', 'Calendar', CalendarDays],
   ['tasks', 'Tasks', CheckCircle2],
-  ['docs', 'Documents', FolderOpen],
+  ['docs', 'My Library', FolderOpen],
   ['courses', 'Courses', BookOpen],
   ['jobs', 'Career', BriefcaseBusiness],
   ['ai', 'ONSTOOD AI', Sparkles],
@@ -194,6 +194,7 @@ const NOTIFICATION_SECTION_BY_KIND = {
   friend_request: 'friends',
   message: 'messages',
   message_mention: 'messages',
+  chat_request: 'messages',
   direct_post: 'messages',
   calendar: 'calendar',
   calendar_reminder: 'calendar',
@@ -209,7 +210,7 @@ const NOTIFICATION_SECTION_BY_KIND = {
 
 const NOTIFICATION_KINDS_BY_SECTION = {
   friends: ['friend_request'],
-  messages: ['message', 'message_mention', 'direct_post'],
+  messages: ['message', 'message_mention', 'chat_request', 'direct_post'],
   calendar: ['calendar', 'calendar_reminder'],
   tasks: ['task', 'task_reminder'],
   docs: ['document'],
