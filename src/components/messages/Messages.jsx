@@ -2180,7 +2180,10 @@ export function PostOffice({
     setNewConversationOpen(false);
     setSearch('');
 
-    if (!compact && typeof onOpenMiniChat === 'function') {
+    if (
+      !compact &&
+      typeof onOpenMiniChat === 'function'
+    ) {
       onOpenMiniChat(
         userId,
         existingConversation?.conversation_id || null
@@ -2361,6 +2364,8 @@ export function PostOffice({
     const conversationId = data;
 
     await loadConversations();
+
+    setRequestTargetUserId(null);
 
     setSelectedConversationId(
       conversationId
@@ -3938,7 +3943,7 @@ export function PostOffice({
         messageCategory ===
           'chat') && (
       <div
-        className="postoffice-layout"
+        className={`postoffice-layout${selectedConversation || requestTarget ? ' conversation-open' : ''}`}
         style={{
           display: 'flex',
           gap: 18,

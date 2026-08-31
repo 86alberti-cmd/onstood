@@ -638,7 +638,11 @@ function App({ session }) {
       return;
     }
 
-    if (isMobileViewport) {
+    const mobileNow =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(max-width: 767px)').matches;
+
+    if (mobileNow) {
       setMiniChats([]);
       setMessageConversationId(
         conversationId || null
@@ -4142,7 +4146,7 @@ function App({ session }) {
             max-width: 100% !important;
           }
 
-          .postoffice-layout:has(.postoffice-message-scroll)
+          .postoffice-layout.conversation-open
           .postoffice-inbox-card {
             display: none !important;
           }
@@ -4158,14 +4162,9 @@ function App({ session }) {
             overflow: hidden !important;
           }
 
-          /* On portrait mobile the empty conversation pane must not exist.
-             It was the large white card covering Profile/Home. */
-          .postoffice-conversation-card:not(:has(.postoffice-message-scroll)) {
-            display: none !important;
-          }
-
-          /* Once a conversation is actually open, use the available screen. */
-          .postoffice-conversation-card:has(.postoffice-message-scroll) {
+          /* The conversation card is rendered only when a real conversation
+             or chat-request target is selected. Keep both visible on mobile. */
+          .postoffice-conversation-card {
             display: flex !important;
             min-height: 0 !important;
             height:
@@ -4250,53 +4249,6 @@ function App({ session }) {
           }
         }
 
-
-        @media (max-width: 767px) {
-          /* MOBILE OPEN CHAT ONLY.
-             Desktop must keep the original floating MiniChat. */
-          .postoffice-conversation-card:has(.postoffice-message-scroll) {
-            position: fixed !important;
-            left: 8px !important;
-            right: 8px !important;
-            top: 76px !important;
-            bottom:
-              calc(
-                82px +
-                env(safe-area-inset-bottom)
-              ) !important;
-            width: auto !important;
-            max-width: none !important;
-            height: auto !important;
-            max-height: none !important;
-            min-height: 0 !important;
-            margin: 0 !important;
-            z-index: 23000 !important;
-            border-radius: 16px !important;
-            background: #fff !important;
-            box-shadow:
-              0 12px 34px rgba(15,23,42,.13) !important;
-            overflow: hidden !important;
-          }
-
-          .postoffice-conversation-card:has(.postoffice-message-scroll)
-          .postoffice-message-scroll {
-            flex: 1 1 auto !important;
-            min-height: 0 !important;
-            overflow-y: auto !important;
-            overscroll-behavior-y: contain;
-            scroll-behavior: auto;
-          }
-
-          .postoffice-conversation-card:has(.postoffice-message-scroll)
-          .postoffice-composer {
-            flex: 0 0 auto !important;
-            padding-bottom:
-              max(
-                8px,
-                env(safe-area-inset-bottom)
-              ) !important;
-          }
-        }
 
         @media (max-width: 520px) {
           .topbar {
