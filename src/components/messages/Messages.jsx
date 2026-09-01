@@ -1838,13 +1838,63 @@ export function PostOffice({
     useState('');
 
 
+  const requestTargetContact =
+    requestTargetUserId
+      ? contacts.find(contact => contact.id === requestTargetUserId) || null
+      : null;
+
+  /*
+   * A brand-new direct chat already exists in Supabase as soon as
+   * start_direct_conversation returns its UUID. On mobile, do not make the
+   * composer depend on list_my_conversations returning the row in the same
+   * render cycle. Keep a tiny local representation of the peer until the
+   * refreshed inbox row arrives. Existing conversations still use the normal
+   * server row exactly as before.
+   */
   const selectedConversation =
     conversations.find(item =>
       item.conversation_id === selectedConversationId
-    ) || null;
+    ) ||
+    (
+      selectedConversationId &&
+      requestTargetContact
+        ? {
+            conversation_id: selectedConversationId,
+            conversation_type: 'direct',
+            other_user_id: requestTargetContact.id,
+            other_name: requestTargetContact.name || '',
+            other_surname: requestTargetContact.surname || '',
+            other_university: requestTargetContact.university || '',
+            other_degree: requestTargetContact.degree || '',
+            other_avatar_url: requestTargetContact.avatar_url || null,
+            other_avatar_visibility: requestTargetContact.avatar_visibility || null,
+            unread_count: 0,
+            inbox_bucket: 'chats',
+            muted: false,
+            starred: false,
+            archived: false,
+            labels: []
+          }
+        : null
+    );
 
   const otherUserId =
     selectedConversation?.other_user_id || null;
+
+  // Restore the established chat behavior: once a conversation is open and
+  // its messages have finished loading, typing can begin immediately.
+  useEffect(() => {
+    if (!selectedConversation || loadingMessages) return;
+
+    const focusInput = () => messageInputRef.current?.focus();
+    const frame = window.requestAnimationFrame(focusInput);
+    const timer = window.setTimeout(focusInput, 120);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [selectedConversationId, selectedConversation, loadingMessages]);
 
   const isOtherOnline =
     otherUserId &&
@@ -2199,7 +2249,10 @@ export function PostOffice({
     }
 
     if (canChatWithUser(userId)) {
-      setRequestTargetUserId(null);
+      // Keep the person selected until the first conversation really exists.
+      // This is essential on mobile, where there is no archived conversation
+      // to fall back to for a brand-new chat.
+      setRequestTargetUserId(userId);
       await startConversation(userId);
       return;
     }
@@ -2361,25 +2414,57 @@ export function PostOffice({
       return;
     }
 
-    const conversationId = data;
+    const conversationId =
+      typeof data === 'string'
+        ? data
+        : data?.conversation_id || data?.id || null;
 
-    await loadConversations();
+    if (!conversationId) {
+      notify('Could not start this conversation.');
+      return;
+    }
 
-    setRequestTargetUserId(null);
+    /*
+     * IMPORTANT FOR MOBILE FIRST-CHAT:
+     * The RPC is the source of truth. Once it returns a UUID, both members
+     * already exist in conversation_members, so the composer can safely open
+     * and send immediately. Do not wait for list_my_conversations.
+     *
+     * Keep requestTargetUserId temporarily so selectedConversation has a local
+     * peer fallback until the inbox refresh contains the new row.
+     */
+    setRequestTargetUserId(userId);
+    setSelectedConversationId(conversationId);
+    onConversationResolved?.(conversationId);
 
-    setSelectedConversationId(
-      conversationId
+    const rows = await loadConversations();
+    const resolvedConversation = rows.find(item =>
+      item.conversation_id === conversationId ||
+      item.other_user_id === userId
     );
 
-    onConversationResolved?.(
-      conversationId
-    );
+    if (resolvedConversation) {
+      setSelectedConversationId(resolvedConversation.conversation_id);
+      setRequestTargetUserId(null);
+      onConversationResolved?.(resolvedConversation.conversation_id);
+    }
   }
 
 
   useEffect(() => {
 
-    if (!requestedUserId || loading) {
+    if (!requestedUserId) {
+      return;
+    }
+
+    // Keep the mobile target visible while the first conversation is being
+    // resolved/created. Without this, a brand-new chat can fall back to the
+    // empty Messages inbox before a conversation_id exists.
+    if (!selectedConversationId) {
+      setRequestTargetUserId(requestedUserId);
+    }
+
+    if (loading) {
       return;
     }
 
@@ -2394,7 +2479,9 @@ export function PostOffice({
     }
 
     if (canChatWithUser(requestedUserId)) {
-      setRequestTargetUserId(null);
+      // Do not clear the mobile target before start_direct_conversation returns.
+      // A first-time chat has no existing conversation_id yet.
+      setRequestTargetUserId(requestedUserId);
       startConversation(requestedUserId);
       return;
     }
@@ -2502,7 +2589,8 @@ export function PostOffice({
 
       const [
         messagesResult,
-        deletionsResult
+        deletionsResult,
+        membershipResult
       ] = await Promise.all([
 
         supabase
@@ -2526,7 +2614,20 @@ export function PostOffice({
           .eq(
             'user_id',
             profile.id
+          ),
+
+        supabase
+          .from('conversation_members')
+          .select('hidden_at')
+          .eq(
+            'conversation_id',
+            selectedConversationId
           )
+          .eq(
+            'user_id',
+            profile.id
+          )
+          .maybeSingle()
 
       ]);
 
@@ -2547,13 +2648,29 @@ export function PostOffice({
               )
           );
 
+        const historyCutoff =
+          membershipResult.data?.hidden_at
+            ? new Date(
+                membershipResult.data.hidden_at
+              ).getTime()
+            : null;
+
         setMessages(
           (messagesResult.data || [])
-            .filter(message =>
-              !hiddenIds.has(
-                message.id
-              )
-            )
+            .filter(message => {
+              if (hiddenIds.has(message.id)) {
+                return false;
+              }
+
+              if (historyCutoff) {
+                return (
+                  new Date(message.created_at).getTime() >
+                  historyCutoff
+                );
+              }
+
+              return true;
+            })
         );
 
       }
@@ -2789,7 +2906,7 @@ export function PostOffice({
 
     if (!error) {
 
-      onMessagesRead?.();
+      onMessagesRead?.(conversationId);
 
       setMemberReadAt(current => ({
         ...current,
@@ -3873,10 +3990,7 @@ export function PostOffice({
         )
       : [];
 
-  const requestTarget =
-    requestTargetUserId
-      ? contacts.find(contact => contact.id === requestTargetUserId) || null
-      : null;
+  const requestTarget = requestTargetContact;
 
   const requestTargetChatRequest =
     requestTargetUserId
@@ -4448,7 +4562,19 @@ export function PostOffice({
               </div>
 
               <div className="empty" style={{ margin: 'auto', padding: 28, textAlign: 'center' }}>
-                {requestTargetChatRequest?.status === 'pending' ? (
+                {canChatWithUser(requestTarget.id) ? (
+                  <>
+                    <h3>Start conversation</h3>
+                    <p>This is your first chat with {requestTarget.name || 'this person'}.</p>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      onClick={() => startConversation(requestTarget.id)}
+                    >
+                      Start chat
+                    </button>
+                  </>
+                ) : requestTargetChatRequest?.status === 'pending' ? (
                   requestTargetChatRequest.sender_id === profile.id ? (
                     <>
                       <h3>Chat request pending</h3>

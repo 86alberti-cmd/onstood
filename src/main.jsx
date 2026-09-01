@@ -511,6 +511,7 @@ function App({ session }) {
   const [notifications, setNotifications] = useState([]);
   const [notificationCounts, setNotificationCounts] = useState({});
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showMessageNotifications, setShowMessageNotifications] = useState(false);
 
 
   const [adminRole, setAdminRole] =
@@ -572,6 +573,7 @@ function App({ session }) {
       setMiniChats([]);
       setMobileMoreOpen(false);
       setShowNotifications(false);
+      setShowMessageNotifications(false);
       setSection('home');
     };
 
@@ -1369,15 +1371,76 @@ function App({ session }) {
   }
 
 
+  const isChatMessageNotification = notification =>
+    notification?.kind === 'message' ||
+    notification?.kind === 'message_mention';
+
+  const generalNotifications =
+    notifications.filter(
+      notification =>
+        !isChatMessageNotification(notification)
+    );
+
   const unreadNotificationCount =
-    notifications.filter(notification =>
+    generalNotifications.filter(notification =>
       !notification.read_at
     ).length;
 
+  const unreadMessageGroups = (() => {
+    const groups = new Map();
 
-  async function markAllNotificationsRead() {
+    notifications.forEach(notification => {
+      if (
+        notification.read_at ||
+        !isChatMessageNotification(notification)
+      ) {
+        return;
+      }
 
-    if (!session?.user?.id) {
+      const senderId =
+        notification?.metadata?.sender_id || null;
+
+      const conversationId =
+        notification?.metadata?.conversation_id || null;
+
+      const key =
+        senderId ||
+        conversationId ||
+        notification.id;
+
+      if (!key) {
+        return;
+      }
+
+      const existing = groups.get(key);
+
+      if (!existing) {
+        groups.set(key, {
+          key,
+          senderId,
+          conversationId,
+          latest: notification,
+          notificationIds:
+            notification.id ? [notification.id] : [],
+          unreadCount: 1
+        });
+        return;
+      }
+
+      existing.unreadCount += 1;
+
+      if (notification.id) {
+        existing.notificationIds.push(notification.id);
+      }
+    });
+
+    return [...groups.values()];
+  })();
+
+  async function markNotificationIdsRead(ids) {
+    const cleanIds = [...new Set((ids || []).filter(Boolean))];
+
+    if (!cleanIds.length) {
       return;
     }
 
@@ -1386,8 +1449,91 @@ function App({ session }) {
     const { error } = await supabase
       .from('notifications')
       .update({ read_at: readAt })
-      .eq('user_id', session.user.id)
-      .is('read_at', null);
+      .in('id', cleanIds);
+
+    if (error) {
+      console.error('Mark message notifications read error:', error);
+      return;
+    }
+
+    setNotifications(current =>
+      current.map(notification =>
+        cleanIds.includes(notification.id)
+          ? { ...notification, read_at: readAt }
+          : notification
+      )
+    );
+
+    setNotificationCounts(current => ({
+      ...current,
+      messages: Math.max(
+        0,
+        (current.messages || 0) - cleanIds.length
+      )
+    }));
+  }
+
+  async function markConversationMessageNotificationsRead(
+    conversationId
+  ) {
+    if (!conversationId) {
+      return;
+    }
+
+    const ids = notifications
+      .filter(notification =>
+        !notification.read_at &&
+        isChatMessageNotification(notification) &&
+        notification?.metadata?.conversation_id === conversationId
+      )
+      .map(notification => notification.id)
+      .filter(Boolean);
+
+    await markNotificationIdsRead(ids);
+  }
+
+  async function openMessageNotificationGroup(group) {
+    if (!group?.latest) {
+      return;
+    }
+
+    await markNotificationIdsRead(group.notificationIds);
+
+    openMiniChat({
+      userId:
+        group.senderId ||
+        group.latest?.metadata?.sender_id ||
+        null,
+      conversationId:
+        group.conversationId ||
+        group.latest?.metadata?.conversation_id ||
+        null
+    });
+
+    setShowMessageNotifications(false);
+  }
+
+  async function markAllNotificationsRead() {
+
+    if (!session?.user?.id) {
+      return;
+    }
+
+    const ids = generalNotifications
+      .filter(notification => !notification.read_at)
+      .map(notification => notification.id)
+      .filter(Boolean);
+
+    if (!ids.length) {
+      return;
+    }
+
+    const readAt = new Date().toISOString();
+
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: readAt })
+      .in('id', ids);
 
     if (error) {
       notify(error.message);
@@ -1395,14 +1541,38 @@ function App({ session }) {
     }
 
     setNotifications(current =>
-      current.map(notification => ({
-        ...notification,
-        read_at:
-          notification.read_at || readAt
-      }))
+      current.map(notification =>
+        ids.includes(notification.id)
+          ? {
+              ...notification,
+              read_at:
+                notification.read_at || readAt
+            }
+          : notification
+      )
     );
 
-    setNotificationCounts({});
+    setNotificationCounts(current => {
+      const next = { ...current };
+
+      generalNotifications.forEach(notification => {
+        if (notification.read_at) {
+          return;
+        }
+
+        const section =
+          getNotificationSection(notification.kind);
+
+        if (section) {
+          next[section] = Math.max(
+            0,
+            (next[section] || 0) - 1
+          );
+        }
+      });
+
+      return next;
+    });
   }
 
 
@@ -2235,12 +2405,13 @@ function App({ session }) {
 <NotificationBell
             show={showNotifications}
             unreadCount={unreadNotificationCount}
-            notifications={notifications}
-            onToggle={() =>
+            notifications={generalNotifications}
+            onToggle={() => {
+              setShowMessageNotifications(false);
               setShowNotifications(
                 current => !current
-              )
-            }
+              );
+            }}
             onClose={() =>
               setShowNotifications(false)
             }
@@ -2255,64 +2426,234 @@ function App({ session }) {
             }
           />
 
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Open Messages"
-            title="Messages"
-            onClick={() => {
-              const latestMessageNotification =
-                notifications.find(item =>
-                  !item.read_at &&
-                  (
-                    item.kind === 'message' ||
-                    item.kind === 'message_mention'
-                  )
-                );
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Open message notifications"
+              title="Messages"
+              aria-expanded={showMessageNotifications}
+              onClick={() => {
+                setShowNotifications(false);
+                setShowMessageNotifications(current => !current);
+              }}
+              style={{
+                position: 'relative'
+              }}
+            >
+              <Mail size={19} />
 
-              if (latestMessageNotification) {
-                openNotification(
-                  latestMessageNotification
-                );
-                return;
-              }
+              {unreadMessageGroups.length > 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: -6,
+                    right: -6,
+                    minWidth: 18,
+                    height: 18,
+                    padding: '0 5px',
+                    borderRadius: 999,
+                    background: '#ef4444',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    lineHeight: 1
+                  }}
+                >
+                  {unreadMessageGroups.length > 99
+                    ? '99+'
+                    : unreadMessageGroups.length}
+                </span>
+              )}
+            </button>
 
-              setMessageConversationId(null);
-              setMessageTargetUserId(null);
-              setSection('messages');
-            }}
-            style={{
-              position: 'relative'
-            }}
-          >
-            <Mail size={19} />
+            {showMessageNotifications && (
+              <>
+                <button
+                  type="button"
+                  className="notification-backdrop"
+                  aria-label="Close message notifications"
+                  onClick={() => setShowMessageNotifications(false)}
+                />
 
-            {(notificationCounts.messages || 0) > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: -6,
-                  right: -6,
-                  minWidth: 18,
-                  height: 18,
-                  padding: '0 5px',
-                  borderRadius: 999,
-                  background: '#ef4444',
-                  color: '#fff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 10,
-                  fontWeight: 800,
-                  lineHeight: 1
-                }}
-              >
-                {(notificationCounts.messages || 0) > 99
-                  ? '99+'
-                  : notificationCounts.messages}
-              </span>
+                <div
+                  role="dialog"
+                  aria-label="New messages"
+                  className="notification-panel"
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 12px)',
+                    right: 0,
+                    width: 'min(390px, 88vw)',
+                    maxHeight: 'min(560px, 72vh)',
+                    overflow: 'hidden',
+                    background: '#fff',
+                    border: '1px solid rgba(15,23,42,0.12)',
+                    borderRadius: 16,
+                    boxShadow: '0 22px 60px rgba(15,23,42,0.20)',
+                    zIndex: 1000
+                  }}
+                >
+                  <div
+                    className="notification-panel-head"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '14px 16px',
+                      borderBottom: '1px solid rgba(15,23,42,0.08)'
+                    }}
+                  >
+                    <div>
+                      <strong>Messages</strong>
+                      <div
+                        style={{
+                          marginTop: 2,
+                          fontSize: 12,
+                          opacity: 0.65
+                        }}
+                      >
+                        {unreadMessageGroups.length > 0
+                          ? `${unreadMessageGroups.length} new ${unreadMessageGroups.length === 1 ? 'conversation' : 'conversations'}`
+                          : 'No new messages'}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn subtle"
+                      onClick={() => {
+                        setShowMessageNotifications(false);
+                        setMessageConversationId(null);
+                        setMessageTargetUserId(null);
+                        setSection('messages');
+                      }}
+                      style={{
+                        padding: '7px 10px',
+                        fontSize: 12
+                      }}
+                    >
+                      All messages
+                    </button>
+                  </div>
+
+                  <div
+                    className="notification-list"
+                    style={{
+                      overflowY: 'auto',
+                      maxHeight: 'min(490px, 64vh)'
+                    }}
+                  >
+                    {unreadMessageGroups.length === 0 ? (
+                      <div
+                        style={{
+                          padding: 24,
+                          textAlign: 'center',
+                          opacity: 0.65
+                        }}
+                      >
+                        No new messages.
+                      </div>
+                    ) : (
+                      unreadMessageGroups.map(group => {
+                        const notification = group.latest;
+                        const originalTitle =
+                          notification.title || 'New message';
+                        const title = /^Message from\s+/i.test(originalTitle)
+                          ? originalTitle.replace(/^Message from\s+/i, 'New message from ')
+                          : originalTitle;
+
+                        return (
+                          <button
+                            key={group.key}
+                            type="button"
+                            className="notification-row"
+                            onClick={() => openMessageNotificationGroup(group)}
+                            style={{
+                              width: '100%',
+                              border: 0,
+                              borderBottom: '1px solid rgba(15,23,42,0.07)',
+                              background: 'rgba(59,130,246,0.07)',
+                              padding: '13px 16px',
+                              display: 'grid',
+                              gridTemplateColumns: '10px 1fr auto',
+                              gap: 10,
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              color: 'inherit'
+                            }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: '50%',
+                                marginTop: 6,
+                                background: '#2563eb'
+                              }}
+                            />
+
+                            <span>
+                              <strong
+                                style={{
+                                  display: 'block',
+                                  fontSize: 13
+                                }}
+                              >
+                                {title}
+                              </strong>
+
+                              {(notification.body || notification.message) && (
+                                <span
+                                  style={{
+                                    display: 'block',
+                                    marginTop: 3,
+                                    fontSize: 12,
+                                    lineHeight: 1.4,
+                                    opacity: 0.72
+                                  }}
+                                >
+                                  {notification.body || notification.message}
+                                </span>
+                              )}
+
+                              <small
+                                style={{
+                                  display: 'block',
+                                  marginTop: 5,
+                                  opacity: 0.52
+                                }}
+                              >
+                                {group.unreadCount > 1
+                                  ? `${group.unreadCount} new messages · `
+                                  : ''}
+                                {notification.created_at
+                                  ? fmtDate(notification.created_at)
+                                  : ''}
+                              </small>
+                            </span>
+
+                            <ChevronRight
+                              size={15}
+                              style={{
+                                marginTop: 3,
+                                opacity: 0.45
+                              }}
+                            />
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </>
             )}
-          </button>
+          </div>
 
 
           {profile.account_type !== 'employer' && (
@@ -2357,9 +2698,11 @@ function App({ session }) {
           }
           onNavigate={id => {
             setSection(id);
-            markSectionNotificationsRead(
-              id
-            );
+            if (id !== 'messages') {
+              markSectionNotificationsRead(
+                id
+              );
+            }
           }}
           onMobileNavigate={key => {
             if (key === 'messages') {
@@ -2486,8 +2829,10 @@ function App({ session }) {
                 setMessageConversationId(conversationId);
                 setMessageTargetUserId(null);
               }}
-              onMessagesRead={() =>
-                markSectionNotificationsRead('messages')
+              onMessagesRead={conversationId =>
+                markConversationMessageNotificationsRead(
+                  conversationId
+                )
               }
               onOpenMiniChat={
                 isMobileViewport
