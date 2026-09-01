@@ -97,11 +97,18 @@ export default function AI({
     try {
       const origin = window.location.origin;
       const basePath = window.location.pathname || '/';
+      const host = window.location.hostname.toLowerCase();
+      const diagnosticCurrency =
+        !['onstood.com', 'www.onstood.com'].includes(host) &&
+        new URLSearchParams(window.location.search).get('paypal_diag')?.toLowerCase() === 'usd'
+          ? 'USD'
+          : null;
       const { data, error } = await supabase.functions.invoke('onstood-paypal-create-subscription', {
         body: {
           return_url: `${origin}${basePath}?paypal=success`,
           cancel_url: `${origin}${basePath}?paypal=cancelled`,
-          plan_code: planCode
+          plan_code: planCode,
+          ...(diagnosticCurrency ? { diagnostic_currency: diagnosticCurrency } : {})
         }
       });
       if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Checkout could not be started.');
@@ -260,6 +267,31 @@ export default function AI({
     ].join('\n');
   }
 
+  function buildAdvancedUpgradePrompt(value) {
+    const originalRequest = String(value || '').trim();
+    if (!originalRequest) return '';
+    return [
+      'Regenerate the answer from the beginning with Advanced ONSTOOD AI.',
+      'Give the most complete, rigorous and detailed answer that is useful for a university student. Do not continue from or refer to a previous truncated Standard answer.',
+      'Structure the response clearly, cover the full scope of the request, explain important details, dates, causes, consequences, examples and connections where relevant, and do not stop mid-section.',
+      '',
+      `Original request: ${originalRequest}`
+    ].join('\n');
+  }
+
+  function previousUserQuestion(messageIndex) {
+    for (let index = messageIndex - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'user') return String(messages[index]?.content || '').trim();
+    }
+    return '';
+  }
+
+  function shouldRecommendAdvanced(data) {
+    if (!data || data.mode === 'advanced') return false;
+    const adaptive = data.adaptive || {};
+    return Boolean(adaptive.output_cap_hit || adaptive.complexity === 'complex');
+  }
+
   function getExamUpgradeQuestion() {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
@@ -269,6 +301,12 @@ export default function AI({
         message?.mode !== 'standard'
       ) {
         continue;
+      }
+
+      // The response-specific Advanced recommendation rendered directly
+      // under the answer supersedes the older generic exam/depth prompt.
+      if (message?.response_meta?.advanced_recommended === true) {
+        return null;
       }
 
       for (let userIndex = index - 1; userIndex >= 0; userIndex -= 1) {
@@ -333,7 +371,7 @@ export default function AI({
     }
     const { data, error } = await supabase
       .from('ai_messages')
-      .select('id,role,mode,content,created_at')
+      .select('id,role,mode,content,response_meta,created_at')
       .eq('conversation_id', id)
       .order('created_at', { ascending: true });
     if (!error) setMessages(data || []);
@@ -566,7 +604,7 @@ export default function AI({
     try {
       const activeId = await ensureConversation(question);
       const userMessage = { conversation_id: activeId, user_id: profile.id, role: 'user', mode: questionMode, content: question };
-      const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,created_at').single();
+      const { data: savedUser, error: saveUserError } = await supabase.from('ai_messages').insert(userMessage).select('id,role,mode,content,response_meta,created_at').single();
       if (saveUserError) throw saveUserError;
       setMessages(current => [...current, savedUser]);
       scrollChat();
@@ -597,13 +635,19 @@ export default function AI({
       await loadUsage();
 
       const answer = appendDownloadActions(data.answer, downloads);
+      const advancedRecommended = questionMode === 'standard' && shouldRecommendAdvanced(data);
       const { data: savedAi, error: saveAiError } = await supabase.from('ai_messages').insert({
         conversation_id: activeId,
         user_id: profile.id,
         role: 'assistant',
         mode: questionMode,
-        content: answer
-      }).select('id,role,mode,content,created_at').single();
+        content: answer,
+        response_meta: {
+          advanced_recommended: advancedRecommended,
+          output_cap_hit: Boolean(data?.adaptive?.output_cap_hit),
+          complexity: data?.adaptive?.complexity || null
+        }
+      }).select('id,role,mode,content,response_meta,created_at').single();
       if (saveAiError) throw saveAiError;
       setMessages(current => [...current, savedAi]);
       await supabase.from('ai_conversations').update({ updated_at: new Date().toISOString() }).eq('id', activeId);
@@ -1172,12 +1216,57 @@ export default function AI({
               style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
             >
               {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
-              {messages.map(message => (
-                <div key={message.id} className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
-                  {message.role === 'assistant' && message.mode === 'advanced' && <small style={{ display: 'block', marginBottom: 5, fontWeight: 900 }}>✦ ADVANCED AI</small>}
-                  {renderAiText(message.content)}
-                </div>
-              ))}
+              {messages.map((message, messageIndex) => {
+                const advancedRecommended =
+                  message?.role === 'assistant' &&
+                  message?.mode === 'standard' &&
+                  message?.response_meta?.advanced_recommended === true;
+                const originalQuestion = advancedRecommended ? previousUserQuestion(messageIndex) : '';
+                return (
+                  <React.Fragment key={message.id}>
+                    <div className={message.role === 'user' ? 'bubble me' : 'bubble'} style={{ whiteSpace: 'pre-wrap' }}>
+                      {message.role === 'assistant' && message.mode === 'advanced' && <small style={{ display: 'block', marginBottom: 5, fontWeight: 900 }}>✦ ADVANCED AI</small>}
+                      {renderAiText(message.content)}
+                    </div>
+                    {advancedRecommended && originalQuestion && (
+                      <div
+                        style={{
+                          margin: '8px 0 14px',
+                          padding: '12px 14px',
+                          borderRadius: 14,
+                          border: '1px solid rgba(99,102,241,.22)',
+                          background: 'linear-gradient(135deg, rgba(99,102,241,.07), rgba(59,130,246,.035))'
+                        }}
+                      >
+                        <small style={{ display: 'block', fontWeight: 900, letterSpacing: '.45px', opacity: .72 }}>✦ ADVANCED AI</small>
+                        <b style={{ display: 'block', marginTop: 4 }}>This answer needs Advanced AI for a complete, detailed response.</b>
+                        <small className="muted" style={{ display: 'block', marginTop: 4, lineHeight: 1.45 }}>
+                          Advanced AI will regenerate the answer from the beginning with substantially more depth and detail.
+                        </small>
+                        <button
+                          type="button"
+                          className="onstood-advanced-chip"
+                          disabled={busy || !isPro || advancedLeft <= 0}
+                          onClick={event => send(event, 'advanced', buildAdvancedUpgradePrompt(originalQuestion))}
+                          title={isPro ? 'Regenerate with Advanced AI' : 'Advanced AI requires an active Advanced plan'}
+                          style={{ marginTop: 10, minHeight: 42 }}
+                        >
+                          <span className="onstood-chip-circuit onstood-chip-circuit-a" />
+                          <span className="onstood-chip-circuit onstood-chip-circuit-b" />
+                          <span className="onstood-chip-circuit onstood-chip-circuit-c" />
+                          <span className="onstood-chip-packet packet-a" />
+                          <span className="onstood-chip-packet packet-b" />
+                          <span className="onstood-chip-core" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
+                          <span className="onstood-chip-label">
+                            <span className="onstood-chip-title">ADVANCED AI</span>
+                            <span className="onstood-chip-count">{advancedLeft}/{plan.advanced_limit}</span>
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
 
               {getExamUpgradeQuestion() && !busy && (
                 <div
@@ -1277,7 +1366,7 @@ export default function AI({
                       Upgrade OnStood AI
                     </button>
                   )}
-                  {plan.plan_code === 'advanced' && (
+                  {['advanced', 'pro'].includes(plan.plan_code) && (
                     <button type="button" className="btn subtle" disabled={billingBusy} onClick={cancelAdvancedRenewal} style={{ fontSize: 11, padding: '5px 9px' }}>
                       Cancel renewal
                     </button>
