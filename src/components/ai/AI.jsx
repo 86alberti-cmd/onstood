@@ -97,18 +97,11 @@ export default function AI({
     try {
       const origin = window.location.origin;
       const basePath = window.location.pathname || '/';
-      const host = window.location.hostname.toLowerCase();
-      const diagnosticCurrency =
-        !['onstood.com', 'www.onstood.com'].includes(host) &&
-        new URLSearchParams(window.location.search).get('paypal_diag')?.toLowerCase() === 'usd'
-          ? 'USD'
-          : null;
       const { data, error } = await supabase.functions.invoke('onstood-paypal-create-subscription', {
         body: {
           return_url: `${origin}${basePath}?paypal=success`,
           cancel_url: `${origin}${basePath}?paypal=cancelled`,
-          plan_code: planCode,
-          ...(diagnosticCurrency ? { diagnostic_currency: diagnosticCurrency } : {})
+          plan_code: planCode
         }
       });
       if (error || !data?.ok) throw new Error(data?.error || error?.message || 'Checkout could not be started.');
@@ -424,6 +417,20 @@ export default function AI({
     setMessages([]);
     setHistoryOpen(false);
     setHistorySearch('');
+
+    const paypalResult = new URLSearchParams(window.location.search).get('paypal');
+    if (paypalResult === 'success') {
+      setBillingNotice('Returned from PayPal. Checking your plan activation…');
+      [1200, 3000, 6000].forEach(delay => window.setTimeout(() => loadUsage(), delay));
+      const url = new URL(window.location.href);
+      url.searchParams.delete('paypal');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    } else if (paypalResult === 'cancelled') {
+      setBillingNotice('Payment was cancelled. No new subscription was activated.');
+      const url = new URL(window.location.href);
+      url.searchParams.delete('paypal');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
 
     loadUsage();
     loadConversations();
@@ -1395,8 +1402,8 @@ export default function AI({
                             <button type="button" className="btn subtle" disabled>Coming soon</button>
                           ) : (
                             <div style={{display:'grid',gap:7}}>
-                              <button type="button" className="btn primary" disabled={billingBusy} onClick={() => startAdvancedCheckout(item.code)}>{billingBusy ? 'Opening payment…' : 'Continue to PayPal'}</button>
-                              <button type="button" className="btn subtle" disabled title="Debit/Credit Card checkout infrastructure prepared; activation follows provider eligibility.">Debit / Credit Card · Coming soon</button>
+                              <button type="button" className="btn primary" disabled={billingBusy} onClick={() => startAdvancedCheckout(item.code)}>{billingBusy ? 'Opening payment…' : 'Continue to secure checkout'}</button>
+                              <small className="muted" style={{fontSize:11,lineHeight:1.4}}>Pay with PayPal or debit/credit card when PayPal makes card checkout available.</small>
                             </div>
                           )}
                         </div>
