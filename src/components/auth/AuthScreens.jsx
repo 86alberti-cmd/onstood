@@ -1675,7 +1675,12 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
     position: relative;
     min-height: 100vh;
     overflow: hidden;
-    background: linear-gradient(102deg,#5f51e8 0%,#7769ef 29%,#a79cf5 50%,#e6e2fd 69%,#fbfbff 84%,#fff 100%) !important;
+    background-image:
+      linear-gradient(90deg, rgba(20,28,38,.18) 0%, rgba(20,28,38,.08) 47%, rgba(255,255,255,.08) 66%, rgba(255,255,255,.42) 100%),
+      url("https://images.unsplash.com/photo-1758801305056-a9a1d4bc0c06?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=72&w=3000") !important;
+    background-size: cover !important;
+    background-position: center 52% !important;
+    background-repeat: no-repeat !important;
   }
 
   .auth-left {
@@ -1693,8 +1698,9 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
     z-index:-2;
     pointer-events:none;
     background:
-      radial-gradient(circle at 16% 12%,rgba(255,255,255,.12),transparent 25%),
-      radial-gradient(circle at 56% 69%,rgba(255,255,255,.26),transparent 30%);
+      linear-gradient(90deg, rgba(7,15,24,.22) 0%, rgba(7,15,24,.06) 76%, transparent 100%),
+      radial-gradient(circle at 18% 12%,rgba(255,255,255,.08),transparent 26%),
+      radial-gradient(circle at 54% 70%,rgba(255,255,255,.13),transparent 31%);
   }
 
   .auth-card {
