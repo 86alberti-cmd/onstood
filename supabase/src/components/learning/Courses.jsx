@@ -2317,7 +2317,7 @@ export default function Courses({
                                 style={{
                                   padding:
                                     '8px 10px',
-                                  borderRadius: 12,
+                                  borderRadius: 10,
                                   background:
                                     message.user_id ===
                                     profile.id

@@ -195,8 +195,7 @@ export default function Post({
   onToggleCommentLike,
   onReplyComment,
   onEditComment,
-  onEditPost,
-  notificationTarget = null
+  onEditPost
 }) {
 
   const author =
@@ -220,11 +219,6 @@ export default function Post({
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [commentEditDraft, setCommentEditDraft] = useState('');
   const [postEditOpen, setPostEditOpen] = useState(false);
-
-  useEffect(() => {
-    if (!notificationTarget) return;
-    if (notificationTarget.commentId) setCommentsOpen(true);
-  }, [notificationTarget?.nonce, notificationTarget?.commentId]);
 
   // Fixed viewers/dialogs should not let the page behind them keep scrolling.
   // Besides being better UX, this prevents expensive backdrop/sticky repainting
@@ -731,7 +725,7 @@ export default function Post({
               const repliesCollapsed = Boolean(collapsedReplies[comment.id]);
 
               return (
-                <div key={comment.id} data-onstood-comment-id={comment.id} className={`onstood-comment-thread depth-${Math.min(depth, 2)}`}>
+                <div key={comment.id} className={`onstood-comment-thread depth-${Math.min(depth, 2)}`}>
                   <div className="onstood-comment-row">
                     <Avatar profile={comment.profiles || {}} />
                     <div className="onstood-comment-main">

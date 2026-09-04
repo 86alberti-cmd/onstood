@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Download, FileText, Globe2, GraduationCap, History, Presentation, Search, Send, Sparkles, WandSparkles, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { Page } from '../ui';
 import OnstoodWordmark from '../OnstoodWordmark';
-import { creatorQualityReport, downloadDocx, downloadPptx, parseCreatorJson, parseAcademicStageMarkdown, parsePresentationMarkdown } from '../../utils/officeExport';
+import { creatorQualityReport, downloadDocx, downloadPptx, parseCreatorJson } from '../../utils/officeExport';
 
 export default function AI({
   profile,
@@ -84,9 +83,6 @@ export default function AI({
   const [creatorResult, setCreatorResult] = useState(null);
   const [creatorPlanConfirm, setCreatorPlanConfirm] = useState(null);
   const [creatorProgress, setCreatorProgress] = useState('');
-  const [academicProjects, setAcademicProjects] = useState([]);
-  const [academicProjectsOpen, setAcademicProjectsOpen] = useState(false);
-  const [academicProjectsBusy, setAcademicProjectsBusy] = useState(false);
   const [creatorForm, setCreatorForm] = useState({ kind:'assignment', topic:'', focus:'', brief:'', level:'Bachelor', citation:'APA 7', citationDisplay:'Academic standard', language:'Auto / Same as request', pages:'8-10', slides:'10-12', output:'word_ppt', template:'OnStood Minimal' });
 
   const AI_LANGUAGES = [
@@ -840,7 +836,6 @@ export default function AI({
     loadUsage();
     loadConversations();
     loadSuggestions();
-    loadAcademicProjects();
     focusInput();
   }, [profile?.id]);
 
@@ -855,72 +850,6 @@ export default function AI({
     }, 3000);
     return () => window.clearInterval(timer);
   }, [suggestions.length]);
-
-
-  async function loadAcademicProjects() {
-    if (!profile?.id) return;
-    setAcademicProjectsBusy(true);
-    try {
-      const { data, error } = await supabase
-        .from('academic_projects')
-        .select('id,title,topic,project_type,academic_level,output_type,template,citation_style,quality_status,quality,project_payload,form_snapshot,advanced_requests,created_at,updated_at')
-        .eq('user_id', profile.id)
-        .order('created_at', { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      setAcademicProjects(data || []);
-    } catch (error) {
-      console.error('academic project archive', error);
-    } finally {
-      setAcademicProjectsBusy(false);
-    }
-  }
-
-  async function archiveAcademicProject(result, planInfo) {
-    if (!profile?.id || !result) return null;
-    const status = result.quality?.ok ? 'ready' : result.quality?.export_safe ? 'needs_review' : 'blocked';
-    const row = {
-      user_id: profile.id,
-      title: result.title || creatorForm.topic || 'OnStood Academic Work',
-      topic: creatorForm.topic || result.title || '',
-      project_type: creatorForm.kind,
-      academic_level: creatorForm.level,
-      output_type: creatorForm.output,
-      template: creatorForm.template,
-      citation_style: creatorForm.citation,
-      quality_status: status,
-      quality: result.quality || {},
-      project_payload: result,
-      form_snapshot: creatorForm,
-      advanced_requests: Number(planInfo?.units || 0)
-    };
-    const { data, error } = await supabase.from('academic_projects').insert(row).select('id').single();
-    if (error) throw error;
-    await loadAcademicProjects();
-    return data?.id || null;
-  }
-
-  function openAcademicProject(project) {
-    if (!project?.project_payload) return;
-    const snapshot = project.form_snapshot && typeof project.form_snapshot === 'object' ? project.form_snapshot : {};
-    setCreatorForm(current => ({ ...current, ...snapshot }));
-    setCreatorResult(project.project_payload);
-    setAcademicProjectsOpen(false);
-    setCreatorOpen(true);
-  }
-
-  function redownloadAcademicProject(project, kind) {
-    if (!project?.project_payload) return;
-    const result = project.project_payload;
-    const form = project.form_snapshot && typeof project.form_snapshot === 'object' ? project.form_snapshot : {};
-    if (!result.quality?.export_safe) {
-      setBillingNotice('This archived project is structurally blocked by Quality Gate and cannot be exported.');
-      return;
-    }
-    const title = result.title || project.title || 'OnStood Academic Work';
-    if (kind === 'word') downloadDocx(title, result, title, { template: form.template || project.template || 'OnStood Minimal', pages: form.pages || '8-10' });
-    if (kind === 'ppt') downloadPptx(title, result.slides || [], title, { template: form.template || project.template || 'OnStood Minimal' });
-  }
 
   async function ensureConversation(question) {
     if (conversationId) return conversationId;
@@ -1027,11 +956,6 @@ export default function AI({
       return [
         `SOURCE ${index + 1}`,
         `Title: ${item?.title || item?.file_name || 'Student contribution'}`,
-        item?.authors ? `Authors: ${Array.isArray(item.authors) ? item.authors.join(', ') : item.authors}` : '',
-        item?.publication_year ? `Year: ${item.publication_year}` : '',
-        item?.source_name ? `Source/Journal: ${item.source_name}` : '',
-        item?.doi ? `DOI: ${item.doi}` : '',
-        item?.source_url ? `Source URL: ${item.source_url}` : '',
         `Type: ${knowledgeTypeLabel(item?.knowledge_type)}`,
         `Quality: ${item?.quality_status || 'accepted'}`,
         `Relevance priority: ${Number(item?.context_priority || item?.rank || 0).toFixed(2)}`,
@@ -1198,31 +1122,19 @@ export default function AI({
     const targetSlides = slideNums.length > 1 ? Math.round((slideNums[0] + slideNums[1]) / 2) : (slideNums[0] || 10);
     const wantsWord = creatorForm.output !== 'ppt';
     const wantsPpt = creatorForm.output !== 'word';
-    const paperCalls = wantsWord ? Math.max(1, Math.ceil(targetWords / 850)) : 0;
+    const paperCalls = wantsWord ? Math.max(1, Math.ceil(targetWords / 1450)) : 0;
     const presentationCalls = wantsPpt ? 1 : 0;
     return { targetWords, targetSlides, paperCalls, presentationCalls, units: Math.max(1, paperCalls + presentationCalls) };
   }
 
-  async function invokeCreatorStage(message, context, sourceCount, stageKind='paper') {
-    const { data, error } = await supabase.functions.invoke('onstood-academic-ai', { body: {
+  async function invokeCreatorStage(message, context, sourceCount) {
+    const { data, error } = await supabase.functions.invoke('onstood-ai', { body: {
       message, mode:'advanced', knowledge_context: context || undefined,
       knowledge_source_count: sourceCount, answer_language:'auto', privacy_scope:'academic_creator'
     }});
     if (error || !data?.answer) throw new Error(data?.error || error?.message || 'Academic Creator could not complete this stage.');
-    const parsed = stageKind === 'presentation' ? parsePresentationMarkdown(data.answer) : parseAcademicStageMarkdown(data.answer);
-    if (!parsed || (stageKind === 'paper' && !(parsed.sections||[]).length) || (stageKind === 'presentation' && !(parsed.slides||[]).length)) {
-      throw new Error('Academic stage did not pass structural validation. No file was exported.');
-    }
-    return parsed;
+    return parseCreatorJson(data.answer);
   }
-
-  function creatorJobKey(planInfo) {
-    const raw = [profile?.id||'user', creatorForm.kind, creatorForm.topic.trim(), creatorForm.focus.trim(), creatorForm.level, creatorForm.citation, creatorForm.pages, creatorForm.slides, creatorForm.output, planInfo.paperCalls].join('|');
-    let h=2166136261; for (let i=0;i<raw.length;i++){h^=raw.charCodeAt(i);h=Math.imul(h,16777619);} return `onstood_academic_${(h>>>0).toString(16)}`;
-  }
-  function readCreatorCheckpoint(key){ try{return JSON.parse(localStorage.getItem(key)||'null')||{parts:[],slidesPart:null};}catch{return {parts:[],slidesPart:null};} }
-  function saveCreatorCheckpoint(key,value){ try{localStorage.setItem(key,JSON.stringify({...value,updatedAt:new Date().toISOString()}));}catch{} }
-  function clearCreatorCheckpoint(key){ try{localStorage.removeItem(key);}catch{} }
 
   function mergeCreatorParts(parts, slidesPart, targetWords) {
     const first = parts[0] || {};
@@ -1235,87 +1147,63 @@ export default function AI({
       references: uniq(parts.flatMap(p=>p.references||[])),
       figures: parts.flatMap(p=>p.figures||[]), tables: parts.flatMap(p=>p.tables||[]), formulas: parts.flatMap(p=>p.formulas||[]),
       slides: slidesPart?.slides || [],
-      academic_note: `OnStood staged academic package. Target ≈ ${targetWords.toLocaleString()} substantive words. Every stage passed structural validation before merge.`
+      academic_note: `Multi-stage Advanced AI academic package. Target ≈ ${targetWords.toLocaleString()} substantive words. Sources must remain traceable and verifiable.`
     };
     return parseCreatorJson(JSON.stringify(merged));
-  }
-
-  async function buildCreatorResearchContext() {
-    setCreatorProgress('Research desk · finding traceable evidence');
-    const queries = [
-      `${creatorForm.topic} ${creatorForm.focus}`,
-      `${creatorForm.topic} official data statistics dataset methodology`,
-      `${creatorForm.topic} empirical study evidence ${creatorForm.level}`
-    ];
-    const packs = await Promise.all(queries.map(q=>searchOnstoodKnowledge(q)));
-    const allResults = packs.flatMap(p=>p.results||[]), allDownloads=packs.flatMap(p=>p.downloads||[]);
-    const matches = uniqueKnowledgeMatches(allResults, queries.join(' '));
-    const context = buildKnowledgeContext(allResults, allDownloads, queries.join(' '));
-    return {matches,context};
   }
 
   async function runAcademicCreator(planInfo) {
     if (creatorBusy) return;
     if (!isPro || advancedLeft < planInfo.units) { setCreatorPlanConfirm(null); setUpgradeOpen(true); return; }
-    setCreatorBusy(true); setCreatorResult(null); setCreatorPlanConfirm(null); setBillingNotice('');
-    const jobKey=creatorJobKey(planInfo);
+    setCreatorBusy(true); setCreatorResult(null); setCreatorPlanConfirm(null);
     try {
-      const {matches,context}=await buildCreatorResearchContext();
-      const checkpoint=readCreatorCheckpoint(jobKey);
-      const parts=Array.isArray(checkpoint.parts)?checkpoint.parts:[];
-      let slidesPart=checkpoint.slidesPart||null;
+      const knowledge = await searchOnstoodKnowledge(`${creatorForm.topic} ${creatorForm.focus}`);
+      const matches = uniqueKnowledgeMatches(knowledge.results, `${creatorForm.topic} ${creatorForm.focus}`);
+      const context = buildKnowledgeContext(knowledge.results, knowledge.downloads, `${creatorForm.topic} ${creatorForm.focus}`);
       const base = [
-        'You are ONSTOOD Academic Creator, an advanced university research-writing engine.',
+        'You are ONSTOOD Academic Creator, an advanced academic research-writing engine.',
         `Topic: ${creatorForm.topic.trim()}`, `Focus: ${creatorForm.focus.trim()}`,
         creatorForm.brief.trim() ? `Student direction: ${creatorForm.brief.trim()}` : '',
         `Academic level: ${creatorForm.level}`, `Citation style: ${creatorForm.citation}`,
         `Citation display: ${creatorForm.citationDisplay}`, `Output language: ${creatorForm.language}`,
-        'Write polished academic prose, not JSON and not a schema. Define concepts, compare evidence, distinguish correlation from causality, state assumptions and limitations, and avoid unsupported certainty.',
-        'Never invent authors, titles, DOI values, URLs, datasets, statistics, quotations or findings. Use only traceable evidence in the supplied context. If quantitative evidence is missing, state the limitation rather than fabricating numbers.',
-        creatorForm.citationDisplay === 'Numbered footnotes' ? 'Use numeric citation markers [1], [2] consistently and provide matching references.' : `Use academically correct in-text citations for ${creatorForm.citation}.`,
-        'Tables must use normal Markdown table syntax. Equations must be on their own line between $$ markers, followed by a line beginning Symbols: and a line beginning Explanation:.',
-        'When real numeric evidence in the supplied sources supports a comparison or time series, add a table with the exact values and a Source: line. OnStood will convert eligible numeric tables into charts. Never invent data to create a chart.',
-        'End each stage cleanly. Never output JSON, code fences, internal instructions, or unfinished sentences.'
+        'Use rigorous academic reasoning: define concepts, compare evidence, distinguish correlation from causality, state assumptions, discuss limitations, and avoid unsupported certainty.',
+        'Never invent authors, titles, journals, DOI values, URLs, datasets, quotations, statistics, institutions or findings. Cite only traceable sources present in supplied OnStood Knowledge context. If evidence is unavailable, say so instead of fabricating it.',
+        creatorForm.citationDisplay === 'Numbered footnotes' ? 'Use numeric citation markers [1], [2] in prose and return complete matching references.' : `Use academically correct in-text citations for ${creatorForm.citation} and return complete matching references.`,
+        'When quantitatively relevant, include useful tables, worked examples, charts/figure specifications and formulas. Every formula must define symbols and units; every table/figure must have a title, source_note, and a sentence explaining what it demonstrates. Never invent numeric data just to make a chart.',
+        'Return ONLY valid JSON, no markdown fences and no prose outside JSON.'
       ].filter(Boolean).join('\n');
-      for (let i=parts.length;i<planInfo.paperCalls;i++) {
-        setCreatorProgress(`Writing & validating · paper stage ${i+1}/${planInfo.paperCalls}`);
-        const from=Math.round((i/planInfo.paperCalls)*100),to=Math.round(((i+1)/planInfo.paperCalls)*100);
-        const previousHeadings=parts.flatMap(p=>(p.sections||[]).map(s=>s.title)).slice(-12).join('; ');
-        const prompt=`${base}\nThis is PAPER STAGE ${i+1} of ${planInfo.paperCalls}, approximately ${from}%–${to}% of ONE continuous paper.\n${previousHeadings?`Already completed headings (DO NOT repeat): ${previousHeadings}`:''}\n${i===0?'Start with a line Title: ..., then Abstract: ..., Keywords: ..., then the first numbered academic sections.':''}${i===planInfo.paperCalls-1?' Finish with a substantive Conclusion section and a References section containing only sources actually cited.':''}\nAim for 650–800 substantive words. Use headings such as ## 1. Introduction and ### 1.1 ... . Paragraphs must be normal academic paragraphs. Include a table/equation only where it materially improves the analysis.`;
-        const stage=await invokeCreatorStage(prompt,context,matches.length,'paper');
-        parts.push(stage); saveCreatorCheckpoint(jobKey,{parts,slidesPart}); await loadUsage();
+      const parts=[];
+      for (let i=0;i<planInfo.paperCalls;i++) {
+        setCreatorProgress(`Academic paper · stage ${i+1}/${planInfo.paperCalls}`);
+        const from = Math.round((i/planInfo.paperCalls)*100), to = Math.round(((i+1)/planInfo.paperCalls)*100);
+        const prompt = `${base}\nThis is PAPER STAGE ${i+1} of ${planInfo.paperCalls}, covering approximately ${from}%–${to}% of the paper. ${i===0?'Establish title, abstract, keywords, research framing and the first analytical sections.':'Continue with NEW sections only; do not repeat earlier material.'} ${i===planInfo.paperCalls-1?'Complete synthesis, limitations and conclusion.':''}\nAim for 1200–1550 substantive words in this stage.\nJSON schema: {"title":"","subtitle":"","abstract":"","keywords":[],"sections":[{"title":"","level":1,"paragraphs":["developed academic prose with citations"],"bullets":[],"table":{"title":"","headers":[],"rows":[],"source_note":""},"formula":{"expression":"","symbols":["x = definition (unit)"],"explanation":""}}],"figures":[{"title":"","type":"bar|line|conceptual","labels":[],"values":[],"series_name":"","source_note":"","interpretation":""}],"conclusion":"","references":["complete traceable citation"],"academic_note":""}. Omit tables/formulas/figures when they are not analytically justified.`;
+        parts.push(await invokeCreatorStage(prompt, context, matches.length));
       }
-      if (planInfo.presentationCalls && !slidesPart) {
-        setCreatorProgress('Building presentation · evidence-led final stage');
-        const mergedPaper=mergeCreatorParts(parts,{slides:[]},planInfo.targetWords);
-        const digest=(mergedPaper.sections||[]).map(s=>`## ${s.title}\n${(s.paragraphs||[]).join(' ').slice(0,1100)}`).join('\n').slice(0,12000);
-        const refs=(mergedPaper.references||[]).slice(0,30).join('\n');
-        const prompt=`${base}\nBuild a REAL university presentation from the completed paper below. Do not copy paragraphs onto slides. Target ${planInfo.targetSlides} slides.\nFORMAT EXACTLY AS:\n## Slide 1 — Title\n- bullet\n- bullet\nTakeaway: one sentence\nSource: citation/source note\n\nRepeat for every slide. Include title/purpose, analytical framework, evidence, comparisons, findings, limitations, conclusion and references. Use 3–5 concise bullets. If a slide uses quantitative evidence, preserve the exact values and source.\nPAPER:\n${digest}\nREFERENCES:\n${refs}`;
-        slidesPart=await invokeCreatorStage(prompt,context,matches.length,'presentation'); saveCreatorCheckpoint(jobKey,{parts,slidesPart}); await loadUsage();
+      let slidesPart={slides:[]};
+      if (planInfo.presentationCalls) {
+        setCreatorProgress('Academic presentation · final stage');
+        const paperDigest = parts.flatMap(p=>(p.sections||[]).map(s=>`${s.title}: ${(s.paragraphs||[]).join(' ').slice(0,900)}`)).join('\n').slice(0,9000);
+        const refs = [...new Set(parts.flatMap(p=>p.references||[]))].slice(0,24);
+        const prompt = `${base}\nBuild a REAL university presentation from the completed paper below. Do not paste paper paragraphs onto slides. Target exactly ${planInfo.targetSlides} slides (±1 only if academically necessary). Include title, research question/purpose, context/literature, method/analytical approach, core evidence/analysis, findings, implications/limitations, conclusion and references. Use 3–5 concise bullets per content slide. Include charts/tables/figures only where supported by supplied evidence.\nPAPER DIGEST:\n${paperDigest}\nVERIFIED REFERENCE LIST:\n${refs.join('\n')}\nJSON schema: {"title":"","slides":[{"title":"","subtitle":"","bullets":[],"takeaway":"","speaker_notes":"","source_note":"","visual":{"type":"none|bar|line|table|formula|process","title":"","labels":[],"values":[],"headers":[],"rows":[],"expression":"","source_note":""}}],"references":[]}.`;
+        slidesPart = await invokeCreatorStage(prompt, context, matches.length);
       }
-      setCreatorProgress('Final quality gate · checking structure, evidence and export safety');
-      const merged=mergeCreatorParts(parts,slidesPart||{slides:[]},planInfo.targetWords);
-      merged.quality=creatorQualityReport(merged,creatorForm.pages,creatorForm.slides);
-      setCreatorResult(merged);
-      await archiveAcademicProject(merged, planInfo);
-      if(merged.quality.ok) clearCreatorCheckpoint(jobKey); else saveCreatorCheckpoint(jobKey,{parts,slidesPart});
-    } catch (error) {
-      setBillingNotice(`${error?.message || 'Academic Creator could not complete the current stage.'} Your completed stages were saved; Generate will resume from the failed stage.`); await loadUsage();
-    } finally { setCreatorBusy(false); setCreatorProgress(''); }
+      const merged = mergeCreatorParts(parts, slidesPart, planInfo.targetWords);
+      merged.quality = creatorQualityReport(merged, creatorForm.pages, creatorForm.slides);
+      setCreatorResult(merged); await loadUsage();
+    } catch (error) { setBillingNotice(error?.message || 'Academic Creator could not complete the work.'); await loadUsage(); }
+    finally { setCreatorBusy(false); setCreatorProgress(''); }
   }
 
   async function generateAcademicCreator(event) {
     event?.preventDefault?.();
     if (creatorBusy || !creatorForm.topic.trim() || !creatorForm.focus.trim()) return;
     const estimate = estimateCreatorProject();
-    // Always show the project-cost confirmation first — even when quota is insufficient.
-    // The modal itself explains what is required and blocks execution until enough quota exists.
+    if (!isPro || advancedLeft < estimate.units) { setUpgradeOpen(true); return; }
     setCreatorPlanConfirm(estimate);
   }
 
   function downloadCreator(kind) {
     if (!creatorResult) return;
-    if (!creatorResult.quality?.export_safe) { setBillingNotice('Quality Gate blocked this download because the file is structurally unsafe or incomplete.'); return; }
     const title = creatorResult.title || creatorForm.topic || 'OnStood Academic Work';
     if (kind === 'word') downloadDocx(title, creatorResult, title, { template: creatorForm.template, pages: creatorForm.pages });
     if (kind === 'ppt') downloadPptx(title, creatorResult.slides || [], title, { template: creatorForm.template });
@@ -1330,11 +1218,6 @@ export default function AI({
       title={<><OnstoodWordmark /> <span style={{ color: '#111827' }}>AI</span></>}
     >
       <style>{`
-
-.creator-launch-actions{display:flex;gap:10px;align-items:stretch}.creator-archive-btn{background:rgba(255,255,255,.08)!important;border-color:rgba(255,255,255,.20)!important}.academic-archive-overlay{z-index:2147482500}.academic-archive-modal{width:min(860px,calc(100vw - 28px));max-height:min(760px,calc(100vh - 36px));overflow:hidden;display:flex;flex-direction:column}.academic-archive-modal .creator-modal-head{flex:0 0 auto}.academic-archive-list{padding:10px 22px 24px;overflow:auto;display:grid;gap:10px}.academic-archive-item{display:flex;align-items:center;gap:14px;padding:14px;border:1px solid #e5e7eb;border-radius:16px;background:#fff}.academic-archive-main{border:0;background:transparent;text-align:left;display:grid;gap:5px;flex:1;min-width:0;cursor:pointer;padding:0}.academic-archive-main b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:14px}.academic-archive-main small{color:#64748b}.academic-project-status{width:max-content;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.45px;background:#f1f5f9;color:#475569}.academic-project-status.ready{background:#ecfdf5;color:#047857}.academic-project-status.needs_review{background:#fff7ed;color:#c2410c}.academic-archive-downloads{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.academic-archive-empty{min-height:220px;display:grid;place-items:center;align-content:center;gap:8px;text-align:center;color:#64748b}.academic-archive-empty b{color:#111827}@media(max-width:1024px){.creator-launch-actions{width:100%;flex-direction:column}.academic-archive-item{align-items:stretch;flex-direction:column}.academic-archive-downloads{justify-content:flex-start}.academic-archive-downloads .btn{flex:1}}
-
-.creator-live-progress{margin:14px 0;padding:18px;border:1px solid #ddd6fe;border-radius:20px;background:linear-gradient(135deg,#fafaff,#f5f3ff);display:flex;gap:14px;align-items:center;box-shadow:0 14px 35px rgba(109,40,217,.10)}.creator-quota-warning{margin:4px 0 16px;padding:13px 14px;border:1px solid #fecaca;border-radius:14px;background:#fff7f7;color:#991b1b}.creator-quota-warning strong,.creator-quota-warning span{display:block}.creator-quota-warning span{margin-top:3px;font-size:12px;color:#b91c1c}.creator-confirm-overlay{z-index:2147483000!important}.creator-live-progress b,.creator-live-progress strong,.creator-live-progress small{display:block}.creator-live-progress strong{margin:3px 0;color:#6d28d9}.creator-live-progress small{color:#64748b}.creator-live-orbit{width:38px;height:38px;border:3px solid #ddd6fe;border-top-color:#7c3aed;border-radius:50%;animation:creatorSpin .9s linear infinite;flex:0 0 auto}@keyframes creatorSpin{to{transform:rotate(360deg)}}.creator-downloads button:disabled{opacity:.45;cursor:not-allowed;filter:grayscale(.25)}
-
         .onstood-advanced-chip{
           width:190px; min-width:190px; min-height:48px; padding:0 14px;
           border-radius:14px; border:1px solid rgba(99,102,241,.30);
@@ -1598,13 +1481,10 @@ export default function AI({
 
       <section className="academic-creator-launch">
         <div className="academic-creator-copy"><span className="creator-kicker"><GraduationCap size={14}/> ACADEMIC CREATOR · ADVANCED AI</span><h2>Turn an idea into university-ready academic work.</h2><p>Build a course assignment, term paper or presentation with academic structure, source discipline and ready-to-download Word / PowerPoint files.</p><div className="creator-pills"><span>Academic structure</span><span>OnStood Knowledge</span><span>APA · Harvard · MLA · Chicago</span><span>DOCX + PPTX</span></div></div>
-        <div className="creator-launch-actions"><button className="creator-launch-btn creator-archive-btn" onClick={()=>{setAcademicProjectsOpen(true);loadAcademicProjects();}}><History size={20}/><span><b>My academic work</b><small>{academicProjects.length ? `${academicProjects.length} saved project${academicProjects.length===1?'':'s'}` : 'Topics · dates · downloads'}</small></span></button><button className="creator-launch-btn" onClick={()=>setCreatorOpen(true)}><WandSparkles size={21}/><span><b>Create academic work</b><small>Powered by Advanced AI</small></span></button></div>
+        <button className="creator-launch-btn" onClick={()=>setCreatorOpen(true)}><WandSparkles size={21}/><span><b>Create academic work</b><small>Powered by Advanced AI</small></span></button>
       </section>
 
-
-      {academicProjectsOpen && <div className="creator-overlay academic-archive-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAcademicProjectsOpen(false)}}><div className="creator-modal academic-archive-modal"><div className="creator-modal-head"><div><span className="creator-kicker"><OnstoodWordmark/> ACADEMIC PROJECTS</span><h2>Your academic work.</h2><p className="muted">Open a previous topic or download the Word / PowerPoint again without using Advanced AI.</p></div><button className="icon-btn" onClick={()=>setAcademicProjectsOpen(false)}><X size={18}/></button></div><div className="academic-archive-list">{academicProjectsBusy?<div className="academic-archive-empty">Loading your academic work…</div>:academicProjects.length?academicProjects.map(project=><article className="academic-archive-item" key={project.id}><button type="button" className="academic-archive-main" onClick={()=>openAcademicProject(project)}><span className={`academic-project-status ${project.quality_status||'draft'}`}>{project.quality_status==='ready'?'Ready':project.quality_status==='needs_review'?'Needs review':'Draft'}</span><b>{project.title || project.topic || 'Untitled academic work'}</b><small>{new Date(project.created_at).toLocaleString()} · {project.academic_level || 'Academic'} · {Number(project.advanced_requests||0)} Advanced</small></button><div className="academic-archive-downloads">{project.output_type!=='ppt'&&<button type="button" className="btn" disabled={!project.project_payload?.quality?.export_safe} onClick={()=>redownloadAcademicProject(project,'word')}><Download size={14}/> Word</button>}{project.output_type!=='word'&&<button type="button" className="btn" disabled={!project.project_payload?.quality?.export_safe} onClick={()=>redownloadAcademicProject(project,'ppt')}><Download size={14}/> PowerPoint</button>}</div></article>):<div className="academic-archive-empty"><History size={28}/><b>No academic projects saved yet.</b><span>Your next Academic Creator result will be saved here automatically.</span></div>}</div></div></div>}
-
-      {creatorPlanConfirm && <div className="creator-confirm-overlay"><div className="creator-confirm-card"><span className="creator-kicker"><OnstoodWordmark/> ADVANCED PROJECT</span><h3>This academic project requires {creatorPlanConfirm.units} Advanced AI requests.</h3><p>OnStood will build it in separate academic stages so a long paper and presentation are not truncated.</p><div className="creator-confirm-metrics"><span><b>{advancedLeft}</b><small>available now</small></span><span><b>{creatorPlanConfirm.units}</b><small>required for project</small></span><span><b>{Math.max(0, advancedLeft-creatorPlanConfirm.units)}</b><small>remaining after</small></span></div>{(!isPro || advancedLeft < creatorPlanConfirm.units) ? <div className="creator-quota-warning"><strong>Not enough Advanced requests</strong><span>{!isPro ? 'An Advanced plan is required for Academic Creator.' : `You need ${creatorPlanConfirm.units - advancedLeft} more Advanced request(s) before this project can start.`}</span></div> : null}<small>Target: ≈ {creatorPlanConfirm.targetWords.toLocaleString()} substantive words · {creatorPlanConfirm.targetSlides} slides. Each stage is charged only when it is actually sent.</small><div className="creator-confirm-actions"><button type="button" className="btn" onClick={()=>setCreatorPlanConfirm(null)}>Cancel</button>{isPro && advancedLeft >= creatorPlanConfirm.units ? <button type="button" className="btn primary" onClick={()=>runAcademicCreator(creatorPlanConfirm)}>Use {creatorPlanConfirm.units} & Create</button> : <button type="button" className="btn primary" onClick={()=>{setCreatorPlanConfirm(null);setUpgradeOpen(true)}}>{isPro?'View options':'View Advanced plan'}</button>}</div></div></div>}
+      {creatorPlanConfirm && <div className="creator-confirm-overlay"><div className="creator-confirm-card"><span className="creator-kicker"><OnstoodWordmark/> ADVANCED PROJECT</span><h3>This academic project requires {creatorPlanConfirm.units} Advanced AI requests.</h3><p>OnStood will build it in separate academic stages so a long paper and presentation are not truncated.</p><div className="creator-confirm-metrics"><span><b>{advancedLeft}</b><small>available now</small></span><span><b>{creatorPlanConfirm.units}</b><small>used for project</small></span><span><b>{advancedLeft-creatorPlanConfirm.units}</b><small>remaining after</small></span></div><small>Target: ≈ {creatorPlanConfirm.targetWords.toLocaleString()} substantive words · {creatorPlanConfirm.targetSlides} slides. Each stage is charged only when it is actually sent.</small><div className="creator-confirm-actions"><button type="button" className="btn" onClick={()=>setCreatorPlanConfirm(null)}>Cancel</button><button type="button" className="btn primary" onClick={()=>runAcademicCreator(creatorPlanConfirm)}>Use {creatorPlanConfirm.units} & Create</button></div></div></div>}
       {creatorOpen && <div className="creator-overlay" onMouseDown={e=>{if(e.target===e.currentTarget&&!creatorBusy)setCreatorOpen(false)}}><div className="creator-modal">
         <div className="creator-modal-head"><div><span className="creator-kicker"><OnstoodWordmark/> ACADEMIC CREATOR</span><h2>Create something worth presenting.</h2></div><button className="icon-btn" onClick={()=>!creatorBusy&&setCreatorOpen(false)}><X size={18}/></button></div>
         <form onSubmit={generateAcademicCreator} className="creator-form">
@@ -1615,8 +1495,8 @@ export default function AI({
           <div className="creator-grid-fields"><label>Academic level<select value={creatorForm.level} onChange={e=>setCreatorForm(v=>({...v,level:e.target.value}))}><option>Bachelor</option><option>Master</option><option>Doctoral / Research</option></select></label><label>Citation style<select value={creatorForm.citation} onChange={e=>setCreatorForm(v=>({...v,citation:e.target.value}))}><option>APA 7</option><option>Harvard</option><option>MLA 9</option><option>Chicago</option></select></label><label>Citation display<select value={creatorForm.citationDisplay} onChange={e=>setCreatorForm(v=>({...v,citationDisplay:e.target.value}))}><option>Academic standard</option><option>Numbered footnotes</option></select></label><label>Language<input list="onstood-creator-languages" value={creatorForm.language} onChange={e=>setCreatorForm(v=>({...v,language:e.target.value}))} placeholder="Auto / search any language…"/><datalist id="onstood-creator-languages">{['Auto / Same as request','English','Shqip (Albanian)','Italiano','Deutsch','Français','Español','Português','Nederlands','Ελληνικά','Türkçe','العربية','中文 (Chinese)','日本語','한국어','हिन्दी','বাংলা','اردو','فارسی','Русский','Українська','Polski','Čeština','Slovenčina','Magyar','Română','Български','Srpski / Српски','Hrvatski','Bosanski','Slovenščina','Македонски','Svenska','Norsk','Dansk','Suomi','Íslenska','Eesti','Latviešu','Lietuvių','Gaeilge','Cymraeg','Català','Galego','Euskara','עברית','Bahasa Indonesia','Bahasa Melayu','Filipino / Tagalog','Tiếng Việt','ไทย','မြန်မာ','ខ្មែរ','ລາວ','नेपाली','සිංහල','தமிழ்','తెలుగు','ಕನ್ನಡ','മലയാളം','मराठी','ગુજરાતી','ਪੰਜਾਬੀ','Kiswahili','Afrikaans','Hausa','Yorùbá','Igbo','አማርኛ','Soomaali','isiZulu','isiXhosa'].map(language=><option key={language} value={language}/>)}</datalist></label><label>Output<select value={creatorForm.output} onChange={e=>setCreatorForm(v=>({...v,output:e.target.value}))}><option value="word">Word</option><option value="ppt">PowerPoint</option><option value="word_ppt">Word + PowerPoint</option></select></label><label>Template<select value={creatorForm.template} onChange={e=>setCreatorForm(v=>({...v,template:e.target.value}))}><option>OnStood Minimal</option><option>Research Classic</option><option>Modern Academic</option></select></label><label>Paper length<input value={creatorForm.pages} onChange={e=>setCreatorForm(v=>({...v,pages:e.target.value}))}/></label><label>Slides<input value={creatorForm.slides} onChange={e=>setCreatorForm(v=>({...v,slides:e.target.value}))}/></label></div>
           <div className="creator-integrity"><Sparkles size={16}/><span><b>Academic integrity built in.</b> OnStood tells Advanced AI not to invent citations or evidence and uses relevant OnStood Knowledge context when available.</span></div>
           {billingNotice?<div className="creator-notice">{billingNotice}</div>:null}
-          {creatorBusy?<div className="creator-live-progress"><div className="creator-live-orbit"><span></span></div><div><b>OnStood Academic Engine is working…</b><strong>{creatorProgress || 'Preparing academic project'}</strong><small>Researching, structuring and validating the current stage. Keep this window open.</small></div></div>:null}{creatorResult?<div className="creator-result"><div><b>{creatorResult.quality?.ok?'Academic package ready.':creatorResult.quality?.export_safe?'Academic draft ready — downloadable with quality warnings.':'Academic draft blocked — structural repair required.'}</b><span>{creatorResult.title}</span></div><div className="creator-quality-grid"><span><b>{Number(creatorResult.quality?.word_count||creatorResult.word_count||0).toLocaleString()}</b><small>words</small></span><span><b>{creatorResult.quality?.section_count||creatorResult.sections?.length||0}</b><small>sections</small></span><span><b>{creatorResult.quality?.reference_count||creatorResult.references?.length||0}</b><small>references</small></span><span><b>{creatorResult.quality?.slide_count||creatorResult.slides?.length||0}</b><small>slides</small></span></div>{creatorResult.quality?.issues?.length?<div className="creator-quality-warning">{creatorResult.quality.issues.map(issue=><small key={issue}>• {issue}</small>)}</div>:<small className="creator-quality-ok">✓ Structure, length, references and presentation passed the local readiness gate.</small>}<div className="creator-downloads">{creatorForm.output!=='ppt'&&<button type="button" className="btn primary" disabled={!creatorResult.quality?.export_safe} onClick={()=>downloadCreator('word')}><Download size={15}/> Download Word draft</button>}{creatorForm.output!=='word'&&<button type="button" className="btn primary" disabled={!creatorResult.quality?.export_safe} onClick={()=>downloadCreator('ppt')}><Download size={15}/> Download PowerPoint draft</button>}</div>{creatorResult.academic_note?<small>{creatorResult.academic_note}</small>:null}</div>:null}
-          <div className="creator-footer"><span>{isPro?`${advancedLeft} Advanced AI request(s) left today`:'Advanced plan required'}</span><button type="button" className="btn primary creator-generate" onClick={generateAcademicCreator} disabled={creatorBusy||!creatorForm.topic.trim()||!creatorForm.focus.trim()}>{creatorBusy?(creatorProgress||'Building academic work…'):isPro?'Generate with Advanced AI':'View Advanced plan'}</button></div>
+          {creatorResult?<div className="creator-result"><div><b>{creatorResult.quality?.ok?'Academic package ready.':'Academic draft ready — quality check flagged items.'}</b><span>{creatorResult.title}</span></div><div className="creator-quality-grid"><span><b>{Number(creatorResult.quality?.word_count||creatorResult.word_count||0).toLocaleString()}</b><small>words</small></span><span><b>{creatorResult.quality?.section_count||creatorResult.sections?.length||0}</b><small>sections</small></span><span><b>{creatorResult.quality?.reference_count||creatorResult.references?.length||0}</b><small>references</small></span><span><b>{creatorResult.quality?.slide_count||creatorResult.slides?.length||0}</b><small>slides</small></span></div>{creatorResult.quality?.issues?.length?<div className="creator-quality-warning">{creatorResult.quality.issues.map(issue=><small key={issue}>• {issue}</small>)}</div>:<small className="creator-quality-ok">✓ Structure, length, references and presentation passed the local readiness gate.</small>}<div className="creator-downloads">{creatorForm.output!=='ppt'&&<button type="button" className="btn primary" onClick={()=>downloadCreator('word')}><Download size={15}/> Download print-ready Word</button>}{creatorForm.output!=='word'&&<button type="button" className="btn primary" onClick={()=>downloadCreator('ppt')}><Download size={15}/> Download academic PowerPoint</button>}</div>{creatorResult.academic_note?<small>{creatorResult.academic_note}</small>:null}</div>:null}
+          <div className="creator-footer"><span>{isPro?`${advancedLeft} Advanced AI request(s) left today`:'Advanced plan required'}</span><button className="btn primary creator-generate" disabled={creatorBusy||!creatorForm.topic.trim()||!creatorForm.focus.trim()}>{creatorBusy?(creatorProgress||'Building academic work…'):isPro?'Generate with Advanced AI':'View Advanced plan'}</button></div>
         </form>
       </div></div>}
 
@@ -1929,9 +1809,9 @@ export default function AI({
           >
             <div
               className="onstood-ai-messages"
-              style={{ flex: 1, minHeight: 0, padding: 18, overflowY: 'auto' }}
+              style={{ flex: 1, padding: 18, overflowY: 'auto', maxHeight: 520 }}
             >
-              {!messages.length && <div className="empty onstood-ai-empty"><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Type your question below — the composer stays visible while you work.</span></div>}
+              {!messages.length && <div className="empty" style={{ marginTop: 90 }}><Sparkles size={28} /><b>Ask ONSTOOD AI</b><span className="muted">Your cursor is ready below. Press Enter for a standard AI question.</span></div>}
               {messages.map((message, messageIndex) => {
                 const advancedRecommended =
                   message?.role === 'assistant' &&
@@ -2093,47 +1973,37 @@ export default function AI({
                   <small className="muted">Enter = Ask AI</small>
                 </div>
               </div>
-              {upgradeOpen && createPortal(
-                <div className="onstood-upgrade-overlay" role="dialog" aria-modal="true" aria-label="Upgrade OnStood AI" onMouseDown={e => { if (e.target === e.currentTarget && !billingBusy) setUpgradeOpen(false); }}>
-                  <div className="card onstood-upgrade-modal">
-                    <div className="onstood-upgrade-head">
+              {upgradeOpen && (
+                <div role="dialog" aria-modal="true" aria-label="Upgrade OnStood AI" onMouseDown={e => { if (e.target === e.currentTarget && !billingBusy) setUpgradeOpen(false); }} style={{ position:'fixed', inset:0, zIndex:1200, background:'rgba(15,23,42,.48)', display:'grid', placeItems:'center', padding:16 }}>
+                  <div className="card" style={{ width:'min(980px, 100%)', maxHeight:'88vh', overflowY:'auto', padding:22, borderRadius:20 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'flex-start', marginBottom:16 }}>
                       <div><h2 style={{margin:0}}>Upgrade <OnstoodWordmark /> AI</h2><div className="muted" style={{marginTop:5}}>Choose the plan that fits your study needs.</div></div>
                       <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(false)}>Close</button>
                     </div>
-                    <div className="onstood-upgrade-scroll">
-                      <div className="onstood-upgrade-grid">
-                        {[
-                          {code:'advanced', title:'Advanced', price:'€16.99 / month', total:'Total: up to 15 AI questions per day', points:[['10 Advanced AI questions every day','For deeper analysis, complex problems and advanced study support.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
-                          {code:'pro', title:'Pro', price:'€49.99 / month', total:'Total: up to 35 AI questions per day', points:[['30 Advanced AI questions every day','For intensive study, deeper analysis and complex academic work.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
-                          {code:'unlimited', title:'Unlimited', price:'Coming soon...', total:'Unlimited Advanced AI questions', points:[['Unlimited Advanced AI questions','Built for the highest level of study and research use.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Advanced study and research support',''],['Fair-use and anti-abuse protections will apply','']]}
-                        ].map(item => (
-                          <div key={item.code} className="onstood-upgrade-plan">
-                            <div><div style={{fontWeight:850,fontSize:19}}><OnstoodWordmark /> {item.title}</div><div style={{fontWeight:800,fontSize:17,marginTop:5}}>{item.price}</div></div>
-                            <div className="onstood-upgrade-points">
-                              {item.points.map(([a,b],i)=><div key={i}><div style={{fontWeight:750}}>✓ {a}</div>{b && <div className="muted" style={{fontSize:12,marginTop:3}}>{b}</div>}</div>)}
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:14 }}>
+                      {[
+                        {code:'advanced', title:'Advanced', price:'€16.99 / month', total:'Total: up to 15 AI questions per day', points:[['10 Advanced AI questions every day','For deeper analysis, complex problems and advanced study support.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
+                        {code:'pro', title:'Pro', price:'€49.99 / month', total:'Total: up to 35 AI questions per day', points:[['30 Advanced AI questions every day','For intensive study, deeper analysis and complex academic work.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Daily limits refresh every day',''],['Cancel renewal anytime','']]},
+                        {code:'unlimited', title:'Unlimited', price:'Coming soon...', total:'Unlimited Advanced AI questions', points:[['Unlimited Advanced AI questions','Built for the highest level of study and research use.'],['5 Standard AI questions every day — free from OnStood','Your free daily questions remain available.'],['Advanced study and research support',''],['Fair-use and anti-abuse protections will apply','']]}
+                      ].map(item => (
+                        <div key={item.code} style={{ border:'1px solid rgba(0,0,0,.10)', borderRadius:16, padding:17, display:'flex', flexDirection:'column', gap:12 }}>
+                          <div><div style={{fontWeight:850,fontSize:19}}><OnstoodWordmark /> {item.title}</div><div style={{fontWeight:800,fontSize:17,marginTop:5}}>{item.price}</div></div>
+                          {item.points.map(([a,b],i)=><div key={i}><div style={{fontWeight:750}}>✓ {a}</div>{b && <div className="muted" style={{fontSize:12,marginTop:3}}>{b}</div>}</div>)}
+                          <div style={{fontWeight:850,marginTop:'auto'}}>{item.total}</div>
+                          {item.code === 'unlimited' ? (
+                            <button type="button" className="btn subtle" disabled>Coming soon</button>
+                          ) : (
+                            <div style={{display:'grid',gap:7}}>
+                              <button type="button" className="btn primary" disabled={billingBusy} onClick={() => startAdvancedCheckout(item.code)}>{billingBusy ? 'Opening payment…' : 'Continue to secure checkout'}</button>
+                              <small className="muted" style={{fontSize:11,lineHeight:1.4}}>Pay with PayPal or debit/credit card when PayPal makes card checkout available.</small>
                             </div>
-                            <div className="onstood-upgrade-total">{item.total}</div>
-                            <div className="onstood-upgrade-cta">
-                              {item.code === 'unlimited' ? (
-                                <button type="button" className="btn subtle" disabled>Coming soon</button>
-                              ) : (
-                                <>
-                                  <button type="button" className="btn primary" disabled={billingBusy} onClick={() => startAdvancedCheckout(item.code)}>{billingBusy ? 'Opening payment…' : 'Continue to secure checkout'}</button>
-                                  <small className="muted">Pay with PayPal or debit/credit card when PayPal makes card checkout available.</small>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <div className="onstood-upgrade-foot">
-                      <small className="muted">Secure checkout · your current daily limits stay available until a new plan activates.</small>
-                      <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(false)}>Cancel</button>
-                    </div>
+                    <button type="button" className="btn subtle" disabled={billingBusy} onClick={() => setUpgradeOpen(false)} style={{marginTop:16}}>Cancel</button>
                   </div>
-                </div>,
-                document.body
+                </div>
               )}
               {billingNotice && <small className="muted" style={{ display: 'block', margin: '-2px 0 8px' }}>{billingNotice}</small>}
               <form
@@ -2218,4 +2088,5 @@ export default function AI({
     </Page>
   );
 }
+        .creator-confirm-overlay{position:fixed;inset:0;z-index:10050;background:rgba(7,12,24,.62);backdrop-filter:blur(10px);display:grid;place-items:center;padding:20px}.creator-confirm-card{width:min(560px,94vw);background:#fff;border:1px solid #e2e8f0;border-radius:24px;padding:26px;box-shadow:0 28px 80px rgba(15,23,42,.28)}.creator-confirm-card h3{margin:10px 0 8px;font-size:22px;color:#0f172a}.creator-confirm-card p{color:#64748b;line-height:1.55}.creator-confirm-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.creator-confirm-metrics span{padding:14px;border:1px solid #e2e8f0;border-radius:16px;background:#f8fafc;text-align:center}.creator-confirm-metrics b{display:block;font-size:24px;color:#111827}.creator-confirm-metrics small{color:#64748b}.creator-confirm-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
 

@@ -147,7 +147,9 @@ export default function HomePage({
   mobileTipVisible = false,
   onMobileTipToggle,
   onMobileTipPrevious,
-  onMobileTipNext
+  onMobileTipNext,
+  notificationTarget = null,
+  onNotificationTargetHandled
 }) {
 
   const [posts, setPosts] = useState([]);
@@ -156,6 +158,8 @@ export default function HomePage({
   const [likes, setLikes] = useState({});
   const [likedByMe, setLikedByMe] = useState({});
   const [comments, setComments] = useState({});
+  const [commentLikes, setCommentLikes] = useState({});
+  const [commentLikedByMe, setCommentLikedByMe] = useState({});
   const [shares, setShares] = useState({});
   const [commentText, setCommentText] = useState({});
   const [connections, setConnections] = useState([]);
@@ -178,6 +182,40 @@ export default function HomePage({
   const [publishing, setPublishing] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!notificationTarget?.postId || busy) return;
+
+    let cancelled = false;
+    const timers = [];
+    const tryScroll = (attempt = 0) => {
+      if (cancelled) return;
+      const commentId = notificationTarget.commentId;
+      const target = commentId
+        ? document.querySelector(`[data-onstood-comment-id="${commentId}"]`)
+        : document.querySelector(`[data-onstood-post-id="${notificationTarget.postId}"]`);
+
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.classList.add('onstood-notification-focus');
+        const removeTimer = window.setTimeout(() => target.classList.remove('onstood-notification-focus'), 2200);
+        timers.push(removeTimer);
+        onNotificationTargetHandled?.();
+        return;
+      }
+
+      if (attempt < 8) {
+        const timer = window.setTimeout(() => tryScroll(attempt + 1), 180);
+        timers.push(timer);
+      } else {
+        onNotificationTargetHandled?.();
+      }
+    };
+
+    const timer = window.setTimeout(() => tryScroll(0), 80);
+    timers.push(timer);
+    return () => { cancelled = true; timers.forEach(window.clearTimeout); };
+  }, [notificationTarget?.nonce, notificationTarget?.postId, notificationTarget?.commentId, busy]);
 
   function hideOnstoodTip() {
     setTipVisible(false);
@@ -582,6 +620,7 @@ export default function HomePage({
           post_id,
           user_id,
           body,
+          parent_comment_id,
           created_at,
           profiles (
             name,
@@ -598,6 +637,22 @@ export default function HomePage({
         .in('post_id', ids)
 
     ]);
+
+    const commentIds = (commentsResult.data || []).map(item => item.id);
+    const commentLikesResult = commentIds.length
+      ? await supabase.from('comment_likes').select('comment_id,user_id').in('comment_id', commentIds)
+      : { data: [], error: null };
+
+    if (commentLikesResult.error) {
+      console.error('Comment likes error:', commentLikesResult.error);
+    }
+
+    const commentLikeCounts = {};
+    const commentMine = {};
+    (commentLikesResult.data || []).forEach(item => {
+      commentLikeCounts[item.comment_id] = (commentLikeCounts[item.comment_id] || 0) + 1;
+      if (item.user_id === profile.id) commentMine[item.comment_id] = true;
+    });
 
     const likeCounts = {};
     const mine = {};
@@ -637,6 +692,8 @@ export default function HomePage({
     setLikes(likeCounts);
     setLikedByMe(mine);
     setComments(commentMap);
+    setCommentLikes(commentLikeCounts);
+    setCommentLikedByMe(commentMine);
     setShares(shareCounts);
     setBusy(false);
   }
@@ -1009,6 +1066,36 @@ export default function HomePage({
     }
   }
 
+  async function editPost(post, body) {
+    const cleanBody = String(body || '').trim();
+    if (!post?.id || post.user_id !== profile.id) return false;
+
+    const editedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ body: cleanBody, edited_at: editedAt })
+      .eq('id', post.id)
+      .eq('user_id', profile.id)
+      .select('id,body,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return false;
+    }
+
+    setPosts(current =>
+      current.map(item =>
+        item.id === post.id
+          ? { ...item, body: data.body, edited_at: data.edited_at }
+          : item
+      )
+    );
+
+    notify('Post updated.');
+    return true;
+  }
+
   async function changePostAudience(postId, audience) {
     if (!['public', 'connections', 'only_me'].includes(audience)) {
       return;
@@ -1041,6 +1128,12 @@ export default function HomePage({
 
   async function updatePostKnowledge(post, enabled) {
     if (!post?.id) return;
+
+    // Knowledge is append-only: once contributed, the indexed knowledge is retained.
+    if (post.knowledge_consent && !enabled) {
+      notify('This post is already part of ONSTOOD Knowledge. The contributed knowledge is retained.');
+      return;
+    }
 
     const run = async () => {
       const { data, error } = await supabase
@@ -1076,7 +1169,7 @@ export default function HomePage({
         {
           body: {
             post_id: post.id,
-            action: enabled ? 'ingest' : 'revoke'
+            action: 'ingest'
           }
         }
       );
@@ -1091,9 +1184,7 @@ export default function HomePage({
       }
 
       notify(
-        enabled
-          ? 'Post contributed to ONSTOOD Knowledge.'
-          : 'Post removed from ONSTOOD Knowledge.'
+        'Post contributed to ONSTOOD Knowledge.'
       );
     };
 
@@ -1194,7 +1285,7 @@ export default function HomePage({
         user_id: profile.id,
         body
       })
-      .select('id,post_id,user_id,body,created_at')
+      .select('id,post_id,user_id,body,parent_comment_id,created_at,edited_at')
       .single();
 
     if (error) {
@@ -1217,6 +1308,112 @@ export default function HomePage({
       ...current,
       [postId]: ''
     }));
+  }
+
+
+  async function replyToComment(postId, parentComment, body) {
+    const cleanBody = String(body || '').trim();
+    if (!cleanBody || !parentComment?.id) return;
+
+    const { data, error } = await supabase
+      .from('post_comments')
+      .insert({
+        post_id: postId,
+        user_id: profile.id,
+        parent_comment_id: parentComment.id,
+        body: cleanBody
+      })
+      .select('id,post_id,user_id,body,parent_comment_id,created_at,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: [...(current[postId] || []), { ...data, profiles: profile }]
+    }));
+  }
+
+  async function toggleCommentLike(comment) {
+    if (!comment?.id) return;
+    const liked = Boolean(commentLikedByMe[comment.id]);
+
+    if (liked) {
+      const { error } = await supabase
+        .from('comment_likes')
+        .delete()
+        .eq('comment_id', comment.id)
+        .eq('user_id', profile.id);
+      if (error) return notify(error.message);
+      setCommentLikedByMe(current => ({ ...current, [comment.id]: false }));
+      setCommentLikes(current => ({
+        ...current,
+        [comment.id]: Math.max(0, Number(current[comment.id] || 1) - 1)
+      }));
+      return;
+    }
+
+    const { error } = await supabase
+      .from('comment_likes')
+      .insert({ comment_id: comment.id, user_id: profile.id });
+    if (error) return notify(error.message);
+    setCommentLikedByMe(current => ({ ...current, [comment.id]: true }));
+    setCommentLikes(current => ({
+      ...current,
+      [comment.id]: Number(current[comment.id] || 0) + 1
+    }));
+  }
+
+  async function editComment(postId, comment, body) {
+    const cleanBody = String(body || '').trim();
+    if (!comment?.id || comment.user_id !== profile.id || !cleanBody) return false;
+
+    const editedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('post_comments')
+      .update({ body: cleanBody, edited_at: editedAt })
+      .eq('id', comment.id)
+      .eq('user_id', profile.id)
+      .select('id,body,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return false;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: (current[postId] || []).map(item =>
+        item.id === comment.id ? { ...item, body: data.body, edited_at: data.edited_at } : item
+      )
+    }));
+    notify('Comment updated.');
+    return true;
+  }
+
+  async function deleteComment(postId, comment) {
+    if (!comment?.id || comment.user_id !== profile.id) return;
+
+    const { error } = await supabase
+      .from('post_comments')
+      .delete()
+      .eq('id', comment.id)
+      .eq('user_id', profile.id);
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: (current[postId] || []).filter(item => item.id !== comment.id)
+    }));
+    notify('Comment deleted.');
   }
 
 
@@ -3002,8 +3199,8 @@ export default function HomePage({
             }
 
             return (
+              <div key={post.id} data-onstood-post-id={post.id}>
               <Post
-                key={post.id}
                 post={post}
                 profile={profile}
                 likeCount={
@@ -3044,6 +3241,7 @@ export default function HomePage({
                   setMailTarget(post);
                   setSelectedConnectionId('');
                 }}
+                onEditPost={body => editPost(post, body)}
                 onDelete={() =>
                   deletePost(post.id)
                 }
@@ -3064,7 +3262,17 @@ export default function HomePage({
                     enabled
                   )
                 }
+                onDeleteComment={comment =>
+                  deleteComment(post.id, comment)
+                }
+                onEditComment={(comment, body) => editComment(post.id, comment, body)}
+                commentLikeCounts={commentLikes}
+                commentLikedByMe={commentLikedByMe}
+                onToggleCommentLike={toggleCommentLike}
+                onReplyComment={(comment, body) => replyToComment(post.id, comment, body)}
+                notificationTarget={notificationTarget?.postId === post.id ? notificationTarget : null}
               />
+              </div>
             );
           }
         )

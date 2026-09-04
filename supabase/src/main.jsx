@@ -318,9 +318,7 @@ const NOTIFICATION_SECTION_BY_KIND = {
   job: 'jobs',
   job_match: 'jobs',
   post_like: 'home',
-  post_comment: 'home',
-  comment_reply: 'home',
-  comment_like: 'home'
+  post_comment: 'home'
 };
 
 const NOTIFICATION_KINDS_BY_SECTION = {
@@ -331,7 +329,7 @@ const NOTIFICATION_KINDS_BY_SECTION = {
   docs: ['document'],
   courses: ['course'],
   jobs: ['job', 'job_match'],
-  home: ['post_like', 'post_comment', 'comment_reply', 'comment_like']
+  home: ['post_like', 'post_comment']
 };
 
 function getInitialSection() {
@@ -627,7 +625,6 @@ function App({ session }) {
   const [notificationCounts, setNotificationCounts] = useState({});
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMessageNotifications, setShowMessageNotifications] = useState(false);
-  const [notificationTarget, setNotificationTarget] = useState(null);
 
 
   const [adminRole, setAdminRole] =
@@ -647,7 +644,7 @@ function App({ session }) {
 
   const [isMobileViewport, setIsMobileViewport] =
     useState(() =>
-      window.matchMedia('(max-width: 1024px)').matches
+      window.matchMedia('(max-width: 767px)').matches
     );
 
   const [mobileMoreOpen, setMobileMoreOpen] =
@@ -734,7 +731,7 @@ function App({ session }) {
 
   useEffect(() => {
     const media =
-      window.matchMedia('(max-width: 1024px)');
+      window.matchMedia('(max-width: 767px)');
 
     const update = () => {
       setIsMobileViewport(media.matches);
@@ -760,7 +757,7 @@ function App({ session }) {
 
     const mobileNow =
       typeof window !== 'undefined' &&
-      window.matchMedia('(max-width: 1024px)').matches;
+      window.matchMedia('(max-width: 767px)').matches;
 
     if (mobileNow) {
       setMiniChats([]);
@@ -1496,8 +1493,7 @@ function App({ session }) {
   const generalNotifications =
     notifications.filter(
       notification =>
-        !isChatMessageNotification(notification) &&
-        notification?.kind !== 'chat_request_cancelled'
+        !isChatMessageNotification(notification)
     );
 
   const unreadNotificationCount =
@@ -1759,26 +1755,6 @@ function App({ session }) {
       return;
     }
 
-    if (notification.kind === 'chat_request') {
-      const senderId = notification?.metadata?.sender_id || null;
-      if (senderId) setRequestedProfileId(senderId);
-      setSection('friends');
-      setShowNotifications(false);
-      return;
-    }
-
-    if (['post_like','post_comment','comment_reply','comment_like'].includes(notification.kind)) {
-      setNotificationTarget({
-        postId: notification?.metadata?.post_id || null,
-        commentId: notification?.metadata?.comment_id || null,
-        kind: notification.kind,
-        nonce: Date.now()
-      });
-      setSection('home');
-      setShowNotifications(false);
-      return;
-    }
-
     if (targetSection) {
       setSection(targetSection);
     }
@@ -1852,50 +1828,50 @@ function App({ session }) {
         .on(
           'postgres_changes',
           {
-            event: '*',
+            event: 'INSERT',
             schema: 'public',
             table: 'notifications',
             filter:
               `user_id=eq.${session.user.id}`
           },
           payload => {
-            const eventType = payload.eventType;
-            const notification = payload.new;
 
-            if (eventType === 'UPDATE') {
-              if (notification?.kind === 'chat_request_cancelled') {
-                setNotifications(current => current.filter(item => item.id !== notification.id));
-                setNotificationCounts(current => ({
-                  ...current,
-                  messages: Math.max(0, (current.messages || 0) - 1)
-                }));
-                return;
-              }
-              setNotifications(current => current.map(item => item.id === notification.id ? notification : item));
-              setNotificationCounts(current => calculateNotificationCounts(
-                current.map(item => item.id === notification.id ? notification : item)
-              ));
-              return;
-            }
+            const notification =
+              payload.new;
 
-            if (eventType !== 'INSERT' || !notification || notification.kind === 'chat_request_cancelled') {
-              return;
-            }
-
-            setNotifications(current => [notification, ...current]);
+            setNotifications(current => [
+              notification,
+              ...current
+            ]);
 
             if (!notification.read_at) {
-              const section = getNotificationSection(notification.kind);
+
+              const section =
+                getNotificationSection(
+                  notification.kind
+                );
+
               if (section) {
-                setNotificationCounts(current => ({
-                  ...current,
-                  [section]: (current[section] || 0) + 1
-                }));
+
+                setNotificationCounts(
+                  current => ({
+                    ...current,
+                    [section]:
+                      (current[section] || 0) + 1
+                  })
+                );
+
               }
             }
 
-            setToast(notification.title || 'New notification');
-            window.setTimeout(() => { setToast(''); }, 3200);
+            setToast(
+              notification.title ||
+              'New notification'
+            );
+
+            window.setTimeout(() => {
+              setToast('');
+            }, 3200);
           }
         )
         .subscribe();
@@ -2839,16 +2815,43 @@ function App({ session }) {
           }
           onNavigate={id => {
             setSection(id);
-            markSectionNotificationsRead(id);
+            if (id !== 'messages') {
+              markSectionNotificationsRead(
+                id
+              );
+            }
           }}
           onMobileNavigate={key => {
             if (key === 'messages') {
-              markSectionNotificationsRead('messages');
-              setMessageConversationId(null);
-              setMessageTargetUserId(null);
-            } else {
-              markSectionNotificationsRead(key);
+              const latestMessageNotification =
+                notifications.find(
+                  item =>
+                    !item.read_at &&
+                    (
+                      item.kind ===
+                        'message' ||
+                      item.kind ===
+                        'message_mention'
+                    )
+                );
+
+              if (
+                latestMessageNotification
+              ) {
+                openNotification(
+                  latestMessageNotification
+                );
+                return;
+              }
+
+              setMessageConversationId(
+                null
+              );
+              setMessageTargetUserId(
+                null
+              );
             }
+
             setSection(key);
           }}
           onProfile={() =>
@@ -2889,8 +2892,6 @@ function App({ session }) {
               onMobileTipToggle={() => setMobileHomeTipVisible(current => !current)}
               onMobileTipPrevious={() => moveSidebarTip(-1)}
               onMobileTipNext={() => moveSidebarTip(1)}
-              notificationTarget={notificationTarget}
-              onNotificationTargetHandled={() => setNotificationTarget(null)}
             />
           )}
 
@@ -3788,7 +3789,7 @@ function App({ session }) {
           }
         }
 
-        @media (max-width: 1024px) {
+        @media (max-width: 760px) {
           .app-grid {
             padding-bottom:
               calc(
@@ -4098,7 +4099,7 @@ function App({ session }) {
 
 
         .onstood-home-mobile-tip { display: none !important; }
-        @media (max-width: 1024px) {
+        @media (max-width: 767px) {
           .onstood-home-welcome.mobile-tip-active { display: none !important; }
           .onstood-home-mobile-tip.active { display: grid !important; grid-template-columns: 34px minmax(0,1fr) 34px; align-items: center; gap: 7px; min-height: 150px; }
           .onstood-home-mobile-tip .onstood-mobile-tip-body h3 { margin: 4px 0 7px; font-size: 19px; line-height: 1.15; }
@@ -4109,7 +4110,7 @@ function App({ session }) {
         .onstood-auth-powered-shell { min-height: 100dvh; position: relative; }
         .onstood-auth-powered { position: fixed; left: 0; right: 0; bottom: 7px; z-index: 4; text-align: center; font-size: 9px; font-weight: 700; letter-spacing: .55px; color: rgba(71,85,105,.55); pointer-events: none; }
 
-        @media (max-width: 1024px) {
+        @media (max-width: 767px) {
           .onstood-mobile-home-tip {
             display: grid; grid-template-columns: 32px minmax(0,1fr) 32px; align-items: center;
             gap: 6px; width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 7px 8px;
@@ -4125,7 +4126,7 @@ function App({ session }) {
         }
 
         /* Mobile browser foundation */
-        @media (max-width: 1024px) {
+        @media (max-width: 767px) {
           html,
           body,
           #root {
@@ -4774,7 +4775,7 @@ function App({ session }) {
           }
         }
 
-        @media (max-width: 1024px) and (orientation: landscape) {
+        @media (max-width: 767px) and (orientation: landscape) {
           .sidebar {
             left: 12px !important;
             right: 12px !important;
@@ -5872,7 +5873,12 @@ function Root() {
 
   if (!session) {
 
-    return <Auth onReady={setSession} />;
+    return (
+      <div className="onstood-auth-powered-shell">
+        <Auth onReady={setSession} />
+        <div className="onstood-auth-powered">Created by AN · Powered by AI</div>
+      </div>
+    );
 
   }
 

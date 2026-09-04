@@ -1,9 +1,53 @@
 import React, { useEffect, useState } from 'react';
-import { Mail, MessageCircle, Search, Send, UserPlus } from 'lucide-react';
+import OnstoodWordmark from '../OnstoodWordmark';
+import { Mail, MessageCircle, Paperclip, Search, Send, UserPlus, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Avatar from '../Avatar';
 import { Page } from '../ui';
 import { ProfileContentTabs } from '../profile/ProfileContent';
+
+
+function createBrowserSafeId() {
+  try {
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.randomUUID === 'function'
+    ) {
+      return crypto.randomUUID();
+    }
+
+    if (
+      typeof crypto !== 'undefined' &&
+      typeof crypto.getRandomValues === 'function'
+    ) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+      const hex = Array.from(
+        bytes,
+        byte => byte.toString(16).padStart(2, '0')
+      );
+
+      return [
+        hex.slice(0, 4).join(''),
+        hex.slice(4, 6).join(''),
+        hex.slice(6, 8).join(''),
+        hex.slice(8, 10).join(''),
+        hex.slice(10, 16).join('')
+      ].join('-');
+    }
+  } catch {
+    // Compatibility fallback below.
+  }
+
+  return `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}-${Math.random()
+    .toString(36)
+    .slice(2, 12)}`;
+}
 
 export default function Friends({
   profile,
@@ -49,7 +93,11 @@ export default function Friends({
   const [sendingPost, setSendingPost] =
     useState(false);
 
+  const [postAttachment, setPostAttachment] =
+    useState(null);
+
   const [followingIds, setFollowingIds] = useState([]);
+  const [blockingId, setBlockingId] = useState(null);
 
   async function loadFollowingIds() {
     const { data, error } = await supabase
@@ -263,41 +311,20 @@ export default function Friends({
     q.trim().toLowerCase();
 
 
-  const filteredPeople =
-    people.filter(person => {
+  const filteredConnections =
+    connectionProfiles.filter(person => {
 
-      if (
-        connectionIds.has(person.id)
-      ) {
-        return false;
+      if (!searchText) {
+        return true;
       }
-
-
-      if (
-        incomingIds.has(person.id)
-      ) {
-        return false;
-      }
-
-
-      if (
-        outgoingIds.has(person.id)
-      ) {
-        return false;
-      }
-
 
       const text =
         `
         ${person.name || ''}
         ${person.surname || ''}
         ${person.university || ''}
-        ${person.faculty || ''}
         ${person.degree || ''}
-        ${person.city || ''}
-        ${person.year || ''}
         `.toLowerCase();
-
 
       return text.includes(
         searchText
@@ -417,6 +444,90 @@ export default function Friends({
 
 
   /* -------------------------------------------------------
+     CANCEL OUTGOING REQUEST
+     ------------------------------------------------------- */
+
+  async function cancelRequest(
+    receiverId
+  ) {
+
+    if (
+      !profile?.id ||
+      !receiverId
+    ) {
+      return;
+    }
+
+    const {
+      error
+    } = await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('sender_id', profile.id)
+      .eq('receiver_id', receiverId)
+      .eq('status', 'pending');
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setOutgoing(current =>
+      current.filter(item => item.receiver_id !== receiverId)
+    );
+
+    notify('Connection request cancelled.');
+
+  }
+
+
+  /* -------------------------------------------------------
+     UNFRIEND
+     ------------------------------------------------------- */
+
+  async function unfriendPerson(person) {
+    if (!person?.id || !profile?.id) {
+      return;
+    }
+
+    const connection = connections.find(item =>
+      item.status === 'accepted' &&
+      (
+        (item.sender_id === profile.id && item.receiver_id === person.id) ||
+        (item.receiver_id === profile.id && item.sender_id === person.id)
+      )
+    );
+
+    if (!connection?.id) {
+      notify('Connection could not be found.');
+      return;
+    }
+
+    const label = `${person.name || 'this person'} ${person.surname || ''}`.trim();
+    if (!window.confirm(`Remove ${label} from your connections? Your chat history will not be deleted.`)) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('id', connection.id)
+      .eq('status', 'accepted');
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setConnections(current =>
+      current.filter(item => item.id !== connection.id)
+    );
+
+    notify(`${label} removed from your connections.`);
+  }
+
+
+  /* -------------------------------------------------------
      ACCEPT
      ------------------------------------------------------- */
 
@@ -528,6 +639,7 @@ export default function Friends({
     setPostRecipient(person);
     setPostSubject('');
     setPostBody('');
+    setPostAttachment(null);
 
   }
 
@@ -541,7 +653,49 @@ export default function Friends({
     setPostRecipient(null);
     setPostSubject('');
     setPostBody('');
+    setPostAttachment(null);
 
+  }
+
+
+  function choosePrivatePostAttachment(event) {
+
+    const file =
+      event.currentTarget.files?.[0] || null;
+
+    event.currentTarget.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    const maxSize =
+      10 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      notify(
+        'Attachments must be smaller than 10 MB.'
+      );
+      return;
+    }
+
+    const extension =
+      file.name
+        .split('.')
+        .pop()
+        ?.toLowerCase() || '';
+
+    const blockedExtensions = [
+      'exe', 'msi', 'bat', 'cmd', 'com',
+      'scr', 'ps1', 'sh', 'js', 'jar'
+    ];
+
+    if (blockedExtensions.includes(extension)) {
+      notify('This file type is not allowed.');
+      return;
+    }
+
+    setPostAttachment(file);
   }
 
 
@@ -557,66 +711,131 @@ export default function Friends({
     const body =
       postBody.trim();
 
-
     if (
       !postRecipient?.id ||
       !subject ||
-      !body ||
+      (!body && !postAttachment) ||
       sendingPost
     ) {
       return;
     }
 
-
     if (body.length > 5000) {
-
       notify(
         'Private posts can contain up to 5000 characters.'
       );
-
       return;
     }
-
 
     setSendingPost(true);
 
+    let attachmentPath = null;
 
-    const {
-      error
-    } = await supabase
-      .from('direct_posts')
-      .insert({
-        sender_id:
-          profile.id,
-        recipient_id:
-          postRecipient.id,
-        subject,
-        body
-      });
+    try {
+      if (postAttachment) {
+        const rawExtension =
+          postAttachment.name
+            .split('.')
+            .pop()
+            ?.toLowerCase() || '';
 
+        const extension =
+          rawExtension
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 12);
 
-    if (error) {
+        const suffix =
+          extension
+            ? `.${extension}`
+            : '';
+
+        attachmentPath =
+          `${postRecipient.id}/${profile.id}/${createBrowserSafeId()}${suffix}`;
+
+        const {
+          error: uploadError
+        } = await supabase.storage
+          .from('direct-post-attachments')
+          .upload(
+            attachmentPath,
+            postAttachment,
+            {
+              cacheControl: '3600',
+              contentType:
+                postAttachment.type ||
+                'application/octet-stream'
+            }
+          );
+
+        if (uploadError) {
+          throw uploadError;
+        }
+      }
+
+      const {
+        error
+      } = await supabase
+        .from('direct_posts')
+        .insert({
+          sender_id:
+            profile.id,
+          recipient_id:
+            postRecipient.id,
+          subject,
+          body,
+          attachment_name:
+            postAttachment?.name || null,
+          attachment_path:
+            attachmentPath,
+          attachment_mime_type:
+            postAttachment?.type || null,
+          attachment_size:
+            postAttachment?.size || null
+        });
+
+      if (error) {
+        if (attachmentPath) {
+          await supabase.storage
+            .from('direct-post-attachments')
+            .remove([attachmentPath]);
+        }
+        throw error;
+      }
 
       notify(
-        error.message
+        `Post sent to ${postRecipient.name || 'student'}.`
       );
 
+      setPostRecipient(null);
+      setPostSubject('');
+      setPostBody('');
+      setPostAttachment(null);
+
+    } catch (error) {
+      notify(
+        error?.message ||
+        'Could not send private post.'
+      );
+    } finally {
       setSendingPost(false);
-      return;
     }
-
-
-    notify(
-      `Post sent to ${postRecipient.name || 'student'}.`
-    );
-
-    setPostRecipient(null);
-    setPostSubject('');
-    setPostBody('');
-    setSendingPost(false);
-
   }
 
+  async function blockPerson(person) {
+    if (!person?.id || blockingId) return;
+    const label = `${person.name || 'this person'} ${person.surname || ''}`.trim();
+    if (!window.confirm(`Block ${label}? You will become invisible to each other on OnStood.`)) return;
+    setBlockingId(person.id);
+    const { error } = await supabase.rpc('block_user', { p_user_id: person.id });
+    setBlockingId(null);
+    if (error) { notify(error.message); return; }
+    setPeople(current => current.filter(item => item.id !== person.id));
+    setConnections(current => current.filter(item => item.sender_id !== person.id && item.receiver_id !== person.id));
+    setRequests(current => current.filter(item => item.sender_id !== person.id));
+    setOutgoing(current => current.filter(item => item.receiver_id !== person.id));
+    setSelectedPerson(null);
+    notify(`${label} blocked.`);
+  }
 
   /* -------------------------------------------------------
      PUBLIC PROFILE
@@ -642,8 +861,7 @@ export default function Friends({
       );
 
     const canChat =
-      status === 'connected' &&
-      isOnline;
+      status === 'connected';
 
 
     return (
@@ -840,9 +1058,9 @@ export default function Friends({
             <button
               type="button"
               className="btn subtle"
-              disabled
+              onClick={() => cancelRequest(person.id)}
             >
-              Request sent
+              Cancel request
             </button>
 
           )}
@@ -850,13 +1068,23 @@ export default function Friends({
 
           {status === 'connected' && (
 
-            <button
-              type="button"
-              className="btn subtle"
-              disabled
-            >
-              Connected ✓
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn subtle"
+                disabled
+              >
+                Connected ✓
+              </button>
+
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={() => unfriendPerson(person)}
+              >
+                Unfriend
+              </button>
+            </>
 
           )}
 
@@ -930,20 +1158,6 @@ export default function Friends({
 
           <button
             type="button"
-            className="btn subtle"
-            onClick={() =>
-              openPostComposer(
-                person
-              )
-            }
-          >
-            <Mail size={16} />
-            Send a post to {person.name || 'student'}
-          </button>
-
-
-          <button
-            type="button"
             className={
               canChat
                 ? 'btn primary'
@@ -954,10 +1168,8 @@ export default function Friends({
             }
             title={
               status !== 'connected'
-                ? 'Live chat is available between accepted connections.'
-                : !isOnline
-                  ? `${person.name || 'This student'} is offline. Send a private post instead.`
-                  : `Chat live with ${person.name || 'student'}`
+                ? 'Chat is available between accepted connections.'
+                : `Chat with ${person.name || 'student'}${isOnline ? '' : ' (offline)'}`
             }
             onClick={() =>
               onOpenChat?.(
@@ -967,22 +1179,16 @@ export default function Friends({
           >
             <MessageCircle size={16} />
 
-            {isOnline &&
-            status === 'connected'
+            {status === 'connected'
               ? `Chat with ${person.name || 'student'}`
-              : `${person.name || 'Student'} is offline`}
+              : 'Chat unavailable'}
           </button>
 
 
-          <span
-            className="muted"
-            style={{
-              width: '100%',
-              fontSize: 12
-            }}
-          >
-            Private posts can be sent at any time. Live chat is available only when an accepted connection is online.
-          </span>
+          <button type="button" className="btn subtle" disabled={blockingId === person.id} onClick={() => blockPerson(person)} style={{ color: '#b91c1c' }}>
+            {blockingId === person.id ? 'Blocking…' : `Block ${person.name || 'person'}`}
+          </button>
+          <span className="muted" style={{ width: '100%', fontSize: 12 }}>Messages are delivered even when a connection is offline.</span>
 
         </div>
 
@@ -1025,28 +1231,10 @@ export default function Friends({
               selectedPerson.surname ||
               ''
             }`.trim()
-          : 'Students & connections'
+          : 'My connections'
       }
 
-      action={
-        !selectedPerson
-          ? (
-            <div className="search-box">
-
-              <Search size={16} />
-
-              <input
-                placeholder="Find a student…"
-                value={q}
-                onChange={e =>
-                  setQ(e.target.value)
-                }
-              />
-
-            </div>
-          )
-          : null
-      }
+      action={null}
     >
 
 
@@ -1055,11 +1243,23 @@ export default function Friends({
           ===================================================== */}
 
       {selectedPerson && (
-
-        <PublicProfile
-          person={selectedPerson}
-        />
-
+        /*
+         * Render the foreign profile inline instead of mounting the
+         * locally-declared PublicProfile function as a React component.
+         *
+         * PublicProfile is declared inside Friends(), so every parent
+         * re-render creates a new function identity. Selecting text opens
+         * the global Copy / Ask AI toolbar in App, which re-renders Friends;
+         * React then treated PublicProfile as a different component,
+         * unmounted/remounted the whole foreign profile and destroyed the
+         * browser text selection — visually looking like a page refresh.
+         *
+         * This renderer uses no hooks, so invoking it inline preserves the
+         * existing UI/logic while keeping the profile DOM stable.
+         */
+        PublicProfile({
+          person: selectedPerson
+        })
       )}
 
 
@@ -1188,6 +1388,86 @@ export default function Friends({
             <div
               style={{
                 display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginTop: 10,
+                flexWrap: 'wrap'
+              }}
+            >
+              <label
+                className="btn subtle"
+                style={{
+                  position: 'relative',
+                  overflow: 'hidden',
+                  cursor: sendingPost
+                    ? 'default'
+                    : 'pointer'
+                }}
+              >
+                <Paperclip size={15} />
+                Attach document
+
+                <input
+                  type="file"
+                  disabled={sendingPost}
+                  onChange={
+                    choosePrivatePostAttachment
+                  }
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: '100%',
+                    height: '100%',
+                    opacity: 0,
+                    cursor: 'pointer'
+                  }}
+                />
+              </label>
+
+              {postAttachment && (
+                <div
+                  className="btn subtle"
+                  style={{
+                    cursor: 'default',
+                    maxWidth: '100%'
+                  }}
+                >
+                  <Paperclip size={14} />
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: 300
+                    }}
+                  >
+                    {postAttachment.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="Remove attachment"
+                    title="Remove attachment"
+                    disabled={sendingPost}
+                    onClick={() =>
+                      setPostAttachment(null)
+                    }
+                    style={{
+                      width: 24,
+                      height: 24,
+                      minWidth: 24
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+
+            <div
+              style={{
+                display: 'flex',
                 justifyContent:
                   'space-between',
                 alignItems:
@@ -1208,7 +1488,8 @@ export default function Friends({
                 disabled={
                   sendingPost ||
                   !postSubject.trim() ||
-                  !postBody.trim()
+                  (!postBody.trim() &&
+                    !postAttachment)
                 }
               >
                 <Send size={16} />
@@ -1229,309 +1510,195 @@ export default function Friends({
 
       {!selectedPerson && (
         <>
-      {/* =====================================================
-          CONNECTION REQUESTS
-          ===================================================== */}
+          {requests.length > 0 && (
+            <section style={{ marginBottom: 22 }}>
+              <div className="section-heading">
+                <div>
+                  <h3 style={{ marginBottom: 2 }}>Friend requests</h3>
+                  <small className="muted">{requests.length} new {requests.length === 1 ? 'request' : 'requests'}</small>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {requests.map(request => {
+                  const person = people.find(item => item.id === request.sender_id);
+                  if (!person) return null;
+                  return (
+                    <div key={request.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+                      <button type="button" onClick={() => openProfile(person)} style={{ border: 0, background: 'transparent', padding: 0, cursor: 'pointer' }}><Avatar profile={person} /></button>
+                      <button type="button" onClick={() => openProfile(person)} style={{ border: 0, background: 'transparent', textAlign: 'left', padding: 0, cursor: 'pointer', flex: 1 }}>
+                        <b>{person.name || 'Student'} {person.surname || ''}</b>
+                        <small className="muted" style={{ display: 'block' }}>{person.university || ''}{person.degree ? ` · ${person.degree}` : ''}</small>
+                      </button>
+                      <button type="button" className="btn primary" onClick={() => accept(request.id)}>Accept</button>
+                      <button type="button" className="btn subtle" onClick={() => decline(request.id)}>Decline</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+          <section>
+            <div
+              className="section-heading"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <div>
+                <h3 style={{ marginBottom: 2 }}>
+                  My connections
+                </h3>
+                <small className="muted">
+                  {connectionProfiles.length}{' '}
+                  {connectionProfiles.length === 1
+                    ? 'connection'
+                    : 'connections'}
+                </small>
+              </div>
 
-      {requests.length > 0 && (
-
-        <section>
-
-          <div className="section-heading">
-
-            <h3>
-              Connection requests
-            </h3>
-
-          </div>
-
-
-          <div className="people-grid">
-
-            {requests.map(request => {
-
-              const sender =
-                incomingProfiles.find(
-                  person =>
-                    person.id ===
-                    request.sender_id
-                );
-
-
-              if (!sender) {
-                return null;
-              }
-
-
-              return (
-
-                <div
-                  className="card person"
-                  key={request.id}
-                  onClick={() =>
-                    openProfile(sender)
+              <div
+                className="search-box onstood-network-list-search"
+                style={{
+                  marginLeft: 'auto'
+                }}
+              >
+                <Search size={16} />
+                <input
+                  placeholder="Search this list…"
+                  value={q}
+                  onChange={event =>
+                    setQ(event.target.value)
                   }
-                  style={{
-                    cursor: 'pointer'
-                  }}
-                >
-
-                  <Avatar
-                    profile={sender}
-                    size="lg"
-                    onImageClick={
-                      setLargeAvatar
-                    }
-                  />
+                  aria-label="Search my connections"
+                />
+              </div>
+            </div>
 
 
-                  <h3>
-                    {sender.name || ''}{' '}
-                    {sender.surname || ''}
-                  </h3>
-
-
-                  <p>
-
-                    {sender.degree ||
-                      'Student'}
-
-                    {sender.university
-                      ? ` · ${sender.university}`
-                      : ''}
-
-                  </p>
-
-
-                  <div
-                    className="two-col"
-                    onClick={event =>
-                      event.stopPropagation()
-                    }
-                  >
-
+            {loading ? (
+              <div className="empty">
+                Loading connections…
+              </div>
+            ) : filteredConnections.length === 0 ? (
+              <div className="empty">
+                {q.trim()
+                  ? 'No connection matches your search.'
+                  : 'You do not have any connections yet.'}
+              </div>
+            ) : (
+              <div
+                className="onstood-network-connection-list"
+                style={{
+                  display: 'grid',
+                  gap: 8
+                }}
+              >
+                {filteredConnections.map(
+                  person => (
                     <button
                       type="button"
-                      className="btn primary"
+                      key={person.id}
+                      className="card onstood-network-connection-row"
                       onClick={() =>
-                        accept(request.id)
+                        openProfile(person)
                       }
+                      style={{
+                        width: '100%',
+                        display: 'grid',
+                        gridTemplateColumns:
+                          'auto minmax(0,1fr)',
+                        gap: 12,
+                        alignItems: 'center',
+                        textAlign: 'left',
+                        padding: '12px 14px',
+                        cursor: 'pointer',
+                        border:
+                          '1px solid rgba(15,23,42,.08)',
+                        background: '#fff'
+                      }}
                     >
-                      Accept
+                      <Avatar
+                        profile={person}
+                        size="md"
+                        onImageClick={
+                          setLargeAvatar
+                        }
+                      />
+
+                      <div
+                        style={{
+                          minWidth: 0,
+                          display: 'grid',
+                          gridTemplateColumns:
+                            'minmax(170px,1.15fr) minmax(180px,1fr) minmax(160px,.9fr)',
+                          gap: 14,
+                          alignItems: 'center'
+                        }}
+                        className="onstood-network-connection-fields"
+                      >
+                        <div
+                          style={{
+                            minWidth: 0
+                          }}
+                        >
+                          <strong
+                            style={{
+                              display: 'block',
+                              overflow: 'hidden',
+                              textOverflow:
+                                'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {person.name || ''}{' '}
+                            {person.surname || ''}
+                          </strong>
+                        </div>
+
+                        <div
+                          className="muted"
+                          style={{
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow:
+                              'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title={
+                            person.university || ''
+                          }
+                        >
+                          {person.university ||
+                            'University not specified'}
+                        </div>
+
+                        <div
+                          className="muted"
+                          style={{
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow:
+                              'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title={
+                            person.degree || ''
+                          }
+                        >
+                          {person.degree ||
+                            'Degree not specified'}
+                        </div>
+                      </div>
                     </button>
-
-
-                    <button
-                      type="button"
-                      className="btn subtle"
-                      onClick={() =>
-                        decline(request.id)
-                      }
-                    >
-                      Decline
-                    </button>
-
-                  </div>
-
-                </div>
-
-              );
-
-            })}
-
-          </div>
-
-        </section>
-
-      )}
-
-
-      {/* =====================================================
-          MY CONNECTIONS
-          ===================================================== */}
-
-      {connectionProfiles.length > 0 && (
-
-        <section>
-
-          <div className="section-heading">
-
-            <h3>
-              My connections
-            </h3>
-
-          </div>
-
-
-          <div className="people-grid">
-
-            {connectionProfiles.map(
-              person => (
-
-                <div
-                  className="card person"
-                  key={person.id}
-                  onClick={() =>
-                    openProfile(person)
-                  }
-                  style={{
-                    cursor: 'pointer'
-                  }}
-                >
-
-                  <Avatar
-                    profile={person}
-                    size="lg"
-                    onImageClick={
-                      setLargeAvatar
-                    }
-                  />
-
-
-                  <h3>
-                    {person.name || ''}{' '}
-                    {person.surname || ''}
-                  </h3>
-
-
-                  <p>
-
-                    {person.degree ||
-                      'Student'}
-
-                    {person.university
-                      ? ` · ${person.university}`
-                      : ''}
-
-                  </p>
-
-
-                  <button
-                    type="button"
-                    className="btn subtle full"
-                    disabled
-                  >
-                    Connected ✓
-                  </button>
-
-                </div>
-
-              )
+                  )
+                )}
+              </div>
             )}
-
-          </div>
-
-        </section>
-
-      )}
-
-
-      {/* =====================================================
-          PEOPLE YOU MAY KNOW
-          ===================================================== */}
-
-      <section>
-
-        <div className="section-heading">
-
-          <h3>
-            People you may know
-          </h3>
-
-        </div>
-
-
-        {loading ? (
-
-          <div className="empty">
-            Loading students…
-          </div>
-
-        ) : filteredPeople.length === 0 ? (
-
-          <div className="empty">
-
-            {q.trim()
-              ? 'No students found.'
-              : 'No new students to show.'}
-
-          </div>
-
-        ) : (
-
-          <div className="people-grid">
-
-            {filteredPeople.map(
-              person => (
-
-                <div
-                  className="card person"
-                  key={person.id}
-                  onClick={() =>
-                    openProfile(person)
-                  }
-                  style={{
-                    cursor: 'pointer'
-                  }}
-                >
-
-                  <Avatar
-                    profile={person}
-                    size="lg"
-                    onImageClick={
-                      setLargeAvatar
-                    }
-                  />
-
-
-                  <h3>
-                    {person.name || ''}{' '}
-                    {person.surname || ''}
-                  </h3>
-
-
-                  <p>
-
-                    {person.degree ||
-                      'Student'}
-
-                    {person.university
-                      ? ` · ${person.university}`
-                      : ''}
-
-                  </p>
-
-
-                  <button
-                    type="button"
-                    className="btn subtle full"
-                    onClick={event => {
-
-                      event.stopPropagation();
-
-                      connect(person.id);
-
-                    }}
-                  >
-
-                    <UserPlus size={16} />
-
-                    Connect
-
-                  </button>
-
-                </div>
-
-              )
-            )}
-
-          </div>
-
-        )}
-
-      </section>
-
-
+          </section>
         </>
       )}
 

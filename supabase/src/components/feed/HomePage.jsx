@@ -1,17 +1,138 @@
 import React, { useEffect, useState } from 'react';
-import OnstoodLogo from '../OnstoodLogo';
+import { OnstoodRichText } from '../OnstoodRichText';
+import OnstoodWordmark from '../OnstoodWordmark';
 import {
   Mail,
   MessageCircle,
   Paperclip,
   Send,
   Sparkles,
+  UserPlus,
   Users
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import Avatar from '../Avatar';
 import { Stat } from '../ui';
 import Post from './Post';
+
+function createBrowserSafeId() {
+  const cryptoApi =
+    typeof globalThis !== 'undefined'
+      ? globalThis.crypto
+      : null;
+
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = Array.from(
+      bytes,
+      byte => byte.toString(16).padStart(2, '0')
+    );
+
+    return [
+      hex.slice(0, 4).join(''),
+      hex.slice(4, 6).join(''),
+      hex.slice(6, 8).join(''),
+      hex.slice(8, 10).join(''),
+      hex.slice(10, 16).join('')
+    ].join('-');
+  }
+
+  return [
+    Date.now().toString(36),
+    Math.random().toString(36).slice(2),
+    Math.random().toString(36).slice(2)
+  ].join('-');
+}
+
+
+function getFileExtension(fileName = '') {
+  const match = String(fileName).toLowerCase().match(/\.([a-z0-9]{1,12})$/);
+  return match ? match[1] : '';
+}
+
+function inferUploadMimeType(file) {
+  const declared =
+    String(file?.type || '')
+      .trim()
+      .toLowerCase();
+
+  const ext =
+    getFileExtension(file?.name);
+
+  const mimeByExtension = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime',
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    txt: 'text/plain',
+    csv: 'text/csv'
+  };
+
+  // Gallery providers on Android sometimes return non-standard MIME aliases
+  // (for example image/jpg) even when the file itself is a normal JPEG.
+  // Prefer a known extension when available, then normalize common aliases.
+  if (mimeByExtension[ext]) {
+    return mimeByExtension[ext];
+  }
+
+  const normalizedDeclared =
+    {
+      'image/jpg': 'image/jpeg',
+      'image/pjpeg': 'image/jpeg',
+      'image/x-png': 'image/png',
+      'video/x-m4v': 'video/mp4'
+    }[declared] || declared;
+
+  if (
+    normalizedDeclared &&
+    normalizedDeclared !== 'application/octet-stream'
+  ) {
+    return normalizedDeclared;
+  }
+
+  return 'application/octet-stream';
+}
+
+function inferPostMediaType(file) {
+  const mime = inferUploadMimeType(file);
+  const ext = getFileExtension(file?.name);
+
+  if (
+    mime.startsWith('image/') ||
+    ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)
+  ) {
+    return 'image';
+  }
+
+  if (
+    mime.startsWith('video/') ||
+    ['mp4', 'webm', 'mov'].includes(ext)
+  ) {
+    return 'video';
+  }
+
+  return 'document';
+}
+
 
 export default function HomePage({
   profile,
@@ -35,9 +156,14 @@ export default function HomePage({
   const [likes, setLikes] = useState({});
   const [likedByMe, setLikedByMe] = useState({});
   const [comments, setComments] = useState({});
+  const [commentLikes, setCommentLikes] = useState({});
+  const [commentLikedByMe, setCommentLikedByMe] = useState({});
   const [shares, setShares] = useState({});
   const [commentText, setCommentText] = useState({});
   const [connections, setConnections] = useState([]);
+  const [peopleSuggestions, setPeopleSuggestions] = useState([]);
+  const [suggestionOffset, setSuggestionOffset] = useState(0);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
   const [shareTarget, setShareTarget] = useState(null);
   const [mailTarget, setMailTarget] = useState(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState('');
@@ -54,8 +180,6 @@ export default function HomePage({
   const [publishing, setPublishing] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
-
-
 
   function hideOnstoodTip() {
     setTipVisible(false);
@@ -238,6 +362,128 @@ export default function HomePage({
   }
 
 
+
+
+  async function loadPeopleSuggestions() {
+
+    setSuggestionsLoading(true);
+
+    const { data: relationshipRows, error: relationshipError } = await supabase
+      .from('friend_requests')
+      .select('sender_id,receiver_id,status')
+      .or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`);
+
+    if (relationshipError) {
+      console.error('Home suggestions relationship error:', relationshipError);
+      setSuggestionsLoading(false);
+      return;
+    }
+
+    const excludedIds = new Set([profile.id]);
+    const friendIds = [];
+    (relationshipRows || []).forEach(item => {
+      const otherId = item.sender_id === profile.id ? item.receiver_id : item.sender_id;
+      if (item.status === 'accepted' || item.status === 'pending') excludedIds.add(otherId);
+      if (item.status === 'accepted') friendIds.push(otherId);
+    });
+
+    let fofIds = new Set();
+    if (friendIds.length) {
+      const { data: fofRows, error: fofError } = await supabase
+        .from('friend_requests')
+        .select('sender_id,receiver_id')
+        .eq('status', 'accepted')
+        .or(`sender_id.in.(${friendIds.join(',')}),receiver_id.in.(${friendIds.join(',')})`);
+      if (!fofError) {
+        (fofRows || []).forEach(row => {
+          if (friendIds.includes(row.sender_id) && !excludedIds.has(row.receiver_id)) fofIds.add(row.receiver_id);
+          if (friendIds.includes(row.receiver_id) && !excludedIds.has(row.sender_id)) fofIds.add(row.sender_id);
+        });
+      }
+    }
+
+    const candidateIds = [...fofIds];
+    let profileQuery = supabase.from('profiles').select(`id,name,surname,university,degree,avatar_url`).neq('id', profile.id).limit(150);
+    const { data: profileRows, error: profileError } = await profileQuery;
+    if (profileError) {
+      console.error('Home suggestions profile error:', profileError);
+      setSuggestionsLoading(false);
+      return;
+    }
+
+    const candidates = (profileRows || []).filter(person => !excludedIds.has(person.id));
+    const shuffle = list => {
+      const copy = [...list];
+      for (let i = copy.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    };
+
+    const fof = shuffle(candidates.filter(person => fofIds.has(person.id)));
+    const myDegree = String(profile.degree || '').trim().toLowerCase();
+    const sameDegree = shuffle(candidates.filter(person => !fofIds.has(person.id) && myDegree && String(person.degree || '').trim().toLowerCase() === myDegree));
+    const other = shuffle(candidates.filter(person => !fofIds.has(person.id) && !sameDegree.some(match => match.id === person.id)));
+
+    /* Target mix: ~90% friends-of-friends, ~10% same study degree.
+       Only use general fallback when one of those pools cannot fill the list. */
+    const target = Math.min(30, candidates.length);
+    const fofTarget = Math.ceil(target * 0.9);
+    const degreeTarget = Math.max(0, target - fofTarget);
+    const selected = [...fof.slice(0, fofTarget), ...sameDegree.slice(0, degreeTarget)];
+    const selectedIds = new Set(selected.map(item => item.id));
+    const fallback = [...fof.slice(fofTarget), ...sameDegree.slice(degreeTarget), ...other].filter(item => !selectedIds.has(item.id));
+    const mixed = shuffle([...selected, ...fallback.slice(0, Math.max(0, target - selected.length))]);
+
+    setPeopleSuggestions(mixed);
+    setSuggestionOffset(0);
+    setSuggestionsLoading(false);
+  }
+
+
+  async function connectSuggestedPerson(
+    personId
+  ) {
+
+    if (
+      !personId ||
+      personId === profile.id
+    ) {
+      return;
+    }
+
+    const {
+      error
+    } = await supabase
+      .from('friend_requests')
+      .insert({
+        sender_id: profile.id,
+        receiver_id: personId
+      });
+
+    if (error) {
+      notify(
+        error.code === '23505'
+          ? 'Request already sent.'
+          : error.message
+      );
+      return;
+    }
+
+    setPeopleSuggestions(current =>
+      current.filter(
+        person =>
+          person.id !== personId
+      )
+    );
+
+    notify(
+      'Connection request sent.'
+    );
+  }
+
+
   async function loadFeed() {
 
     setBusy(true);
@@ -338,6 +584,7 @@ export default function HomePage({
           post_id,
           user_id,
           body,
+          parent_comment_id,
           created_at,
           profiles (
             name,
@@ -354,6 +601,22 @@ export default function HomePage({
         .in('post_id', ids)
 
     ]);
+
+    const commentIds = (commentsResult.data || []).map(item => item.id);
+    const commentLikesResult = commentIds.length
+      ? await supabase.from('comment_likes').select('comment_id,user_id').in('comment_id', commentIds)
+      : { data: [], error: null };
+
+    if (commentLikesResult.error) {
+      console.error('Comment likes error:', commentLikesResult.error);
+    }
+
+    const commentLikeCounts = {};
+    const commentMine = {};
+    (commentLikesResult.data || []).forEach(item => {
+      commentLikeCounts[item.comment_id] = (commentLikeCounts[item.comment_id] || 0) + 1;
+      if (item.user_id === profile.id) commentMine[item.comment_id] = true;
+    });
 
     const likeCounts = {};
     const mine = {};
@@ -393,6 +656,8 @@ export default function HomePage({
     setLikes(likeCounts);
     setLikedByMe(mine);
     setComments(commentMap);
+    setCommentLikes(commentLikeCounts);
+    setCommentLikedByMe(commentMine);
     setShares(shareCounts);
     setBusy(false);
   }
@@ -401,7 +666,35 @@ export default function HomePage({
   useEffect(() => {
     loadFeed();
     loadConnections();
+    loadPeopleSuggestions();
   }, [profile.id]);
+
+
+  useEffect(() => {
+
+    if (
+      peopleSuggestions.length <= 1
+    ) {
+      return undefined;
+    }
+
+    const timer =
+      window.setInterval(() => {
+
+        setSuggestionOffset(
+          current =>
+            (
+              current + 4
+            ) %
+            peopleSuggestions.length
+        );
+
+      }, 10000);
+
+    return () =>
+      window.clearInterval(timer);
+
+  }, [peopleSuggestions.length]);
 
 
   function addPostFiles(fileList) {
@@ -485,11 +778,17 @@ export default function HomePage({
           .pop()
           ?.toLowerCase() || '';
 
+      const inferredMime =
+        inferUploadMimeType(file);
+
+      const inferredMediaType =
+        inferPostMediaType(file);
+
       const isImage =
-        file.type?.startsWith('image/');
+        inferredMediaType === 'image';
 
       const isVideo =
-        file.type?.startsWith('video/');
+        inferredMediaType === 'video';
 
       const isDocument =
         [
@@ -502,7 +801,7 @@ export default function HomePage({
           'application/vnd.openxmlformats-officedocument.presentationml.presentation',
           'text/plain',
           'text/csv'
-        ].includes(file.type);
+        ].includes(inferredMime);
 
       return (
         blockedExtensions.includes(
@@ -583,21 +882,35 @@ export default function HomePage({
 
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
+        const inferredMime =
+          inferUploadMimeType(file);
+
+        const mediaType =
+          inferPostMediaType(file);
+
         const originalExt =
-          (file.name.split('.').pop() || '').toLowerCase();
+          getFileExtension(file.name)
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 12);
+
+        const fallbackExt =
+          mediaType === 'video'
+            ? 'mp4'
+            : mediaType === 'image'
+              ? 'jpg'
+              : 'bin';
 
         const ext =
-          originalExt ||
-          (file.type?.startsWith('video/') ? 'mp4' : 'jpg');
+          originalExt || fallbackExt;
 
         const path =
-          `${profile.id}/${data.id}/${crypto.randomUUID()}.${ext}`;
+          `${profile.id}/${data.id}/${createBrowserSafeId()}.${ext}`;
 
         const { error: uploadError } =
           await supabase.storage
             .from('post-media')
             .upload(path, file, {
-              contentType: file.type,
+              contentType: inferredMime,
               upsert: false,
               cacheControl: '3600'
             });
@@ -608,13 +921,6 @@ export default function HomePage({
 
         uploadedPaths.push(path);
 
-        const mediaType =
-          file.type?.startsWith('video/')
-            ? 'video'
-            : file.type?.startsWith('image/')
-              ? 'image'
-              : 'document';
-
         const { data: mediaData, error: mediaError } =
           await supabase
             .from('post_media')
@@ -623,7 +929,7 @@ export default function HomePage({
               owner_id: profile.id,
               media_type: mediaType,
               storage_path: path,
-              mime_type: file.type || null,
+              mime_type: inferredMime || null,
               caption: file.name || null,
               sort_order: index
             })
@@ -724,6 +1030,36 @@ export default function HomePage({
     }
   }
 
+  async function editPost(post, body) {
+    const cleanBody = String(body || '').trim();
+    if (!post?.id || post.user_id !== profile.id) return false;
+
+    const editedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ body: cleanBody, edited_at: editedAt })
+      .eq('id', post.id)
+      .eq('user_id', profile.id)
+      .select('id,body,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return false;
+    }
+
+    setPosts(current =>
+      current.map(item =>
+        item.id === post.id
+          ? { ...item, body: data.body, edited_at: data.edited_at }
+          : item
+      )
+    );
+
+    notify('Post updated.');
+    return true;
+  }
+
   async function changePostAudience(postId, audience) {
     if (!['public', 'connections', 'only_me'].includes(audience)) {
       return;
@@ -756,6 +1092,12 @@ export default function HomePage({
 
   async function updatePostKnowledge(post, enabled) {
     if (!post?.id) return;
+
+    // Knowledge is append-only: once contributed, the indexed knowledge is retained.
+    if (post.knowledge_consent && !enabled) {
+      notify('This post is already part of ONSTOOD Knowledge. The contributed knowledge is retained.');
+      return;
+    }
 
     const run = async () => {
       const { data, error } = await supabase
@@ -791,7 +1133,7 @@ export default function HomePage({
         {
           body: {
             post_id: post.id,
-            action: enabled ? 'ingest' : 'revoke'
+            action: 'ingest'
           }
         }
       );
@@ -806,9 +1148,7 @@ export default function HomePage({
       }
 
       notify(
-        enabled
-          ? 'Post contributed to ONSTOOD Knowledge.'
-          : 'Post removed from ONSTOOD Knowledge.'
+        'Post contributed to ONSTOOD Knowledge.'
       );
     };
 
@@ -909,7 +1249,7 @@ export default function HomePage({
         user_id: profile.id,
         body
       })
-      .select('id,post_id,user_id,body,created_at')
+      .select('id,post_id,user_id,body,parent_comment_id,created_at,edited_at')
       .single();
 
     if (error) {
@@ -932,6 +1272,112 @@ export default function HomePage({
       ...current,
       [postId]: ''
     }));
+  }
+
+
+  async function replyToComment(postId, parentComment, body) {
+    const cleanBody = String(body || '').trim();
+    if (!cleanBody || !parentComment?.id) return;
+
+    const { data, error } = await supabase
+      .from('post_comments')
+      .insert({
+        post_id: postId,
+        user_id: profile.id,
+        parent_comment_id: parentComment.id,
+        body: cleanBody
+      })
+      .select('id,post_id,user_id,body,parent_comment_id,created_at,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: [...(current[postId] || []), { ...data, profiles: profile }]
+    }));
+  }
+
+  async function toggleCommentLike(comment) {
+    if (!comment?.id) return;
+    const liked = Boolean(commentLikedByMe[comment.id]);
+
+    if (liked) {
+      const { error } = await supabase
+        .from('comment_likes')
+        .delete()
+        .eq('comment_id', comment.id)
+        .eq('user_id', profile.id);
+      if (error) return notify(error.message);
+      setCommentLikedByMe(current => ({ ...current, [comment.id]: false }));
+      setCommentLikes(current => ({
+        ...current,
+        [comment.id]: Math.max(0, Number(current[comment.id] || 1) - 1)
+      }));
+      return;
+    }
+
+    const { error } = await supabase
+      .from('comment_likes')
+      .insert({ comment_id: comment.id, user_id: profile.id });
+    if (error) return notify(error.message);
+    setCommentLikedByMe(current => ({ ...current, [comment.id]: true }));
+    setCommentLikes(current => ({
+      ...current,
+      [comment.id]: Number(current[comment.id] || 0) + 1
+    }));
+  }
+
+  async function editComment(postId, comment, body) {
+    const cleanBody = String(body || '').trim();
+    if (!comment?.id || comment.user_id !== profile.id || !cleanBody) return false;
+
+    const editedAt = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('post_comments')
+      .update({ body: cleanBody, edited_at: editedAt })
+      .eq('id', comment.id)
+      .eq('user_id', profile.id)
+      .select('id,body,edited_at')
+      .single();
+
+    if (error) {
+      notify(error.message);
+      return false;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: (current[postId] || []).map(item =>
+        item.id === comment.id ? { ...item, body: data.body, edited_at: data.edited_at } : item
+      )
+    }));
+    notify('Comment updated.');
+    return true;
+  }
+
+  async function deleteComment(postId, comment) {
+    if (!comment?.id || comment.user_id !== profile.id) return;
+
+    const { error } = await supabase
+      .from('post_comments')
+      .delete()
+      .eq('id', comment.id)
+      .eq('user_id', profile.id);
+
+    if (error) {
+      notify(error.message);
+      return;
+    }
+
+    setComments(current => ({
+      ...current,
+      [postId]: (current[postId] || []).filter(item => item.id !== comment.id)
+    }));
+    notify('Comment deleted.');
   }
 
 
@@ -1528,6 +1974,28 @@ export default function HomePage({
   }
 
 
+  const visiblePeopleSuggestions =
+    peopleSuggestions.length
+      ? Array.from(
+          {
+            length:
+              Math.min(
+                4,
+                peopleSuggestions.length
+              )
+          },
+          (_, index) =>
+            peopleSuggestions[
+              (
+                suggestionOffset +
+                index
+              ) %
+              peopleSuggestions.length
+            ]
+        )
+      : [];
+
+
   const personalizedFeed =
     buildPersonalizedFeed();
 
@@ -1565,7 +2033,7 @@ export default function HomePage({
               className="muted"
               style={{ fontWeight: 900 }}
             >
-              KNOWLEDGE · CONTENT RIGHTS
+              <OnstoodWordmark /> KNOWLEDGE · CONTENT RIGHTS
             </small>
 
             <h3 style={{ margin: '6px 0 8px' }}>
@@ -1576,7 +2044,7 @@ export default function HomePage({
               className="muted"
               style={{ lineHeight: 1.55 }}
             >
-              ONSTOOD Knowledge can help other students from
+              <OnstoodWordmark /> Knowledge can help other students from
               contributed material. Only contribute content you own
               or have permission or legal rights to share.
             </p>
@@ -1630,7 +2098,7 @@ export default function HomePage({
                 lineHeight: 1.45
               }}
             >
-              For answer generation, ONSTOOD may send only small,
+              For answer generation, <OnstoodWordmark /> may send only small,
               relevant, privacy-filtered excerpts to its AI processing
               provider. Original files are not sent as a knowledge
               base and are not authorized for external AI
@@ -1675,7 +2143,7 @@ export default function HomePage({
       <section className={`hero onstood-home-welcome ${mobileTipVisible ? 'mobile-tip-active' : ''}`}>
         <div>
           <span className="eyebrow">
-            WELCOME
+            WELCOME TO <OnstoodWordmark />
           </span>
 
           <h1>
@@ -1695,7 +2163,7 @@ export default function HomePage({
               onClick={() => go('ai')}
             >
               <Sparkles size={16} />
-              Ask AI
+              Ask <OnstoodWordmark /> AI
             </button>
 
             <button
@@ -1708,6 +2176,209 @@ export default function HomePage({
           </div>
         </div>
       </section>
+
+      <section
+        className="card onstood-home-people-suggestions"
+        style={{
+          padding: '12px 14px',
+          marginTop: 12,
+          marginBottom: 14,
+          overflow: 'hidden'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent:
+              'space-between',
+            gap: 10,
+            marginBottom: 10
+          }}
+        >
+          <div>
+            <strong>
+              People you may know
+            </strong>
+            <small
+              className="muted"
+              style={{
+                display: 'block',
+                marginTop: 2
+              }}
+            >
+              Suggestions refresh every 10 seconds
+            </small>
+          </div>
+        </div>
+
+        {suggestionsLoading ? (
+          <div
+            className="muted"
+            style={{
+              padding: '8px 0'
+            }}
+          >
+            Finding students…
+          </div>
+        ) : visiblePeopleSuggestions.length === 0 ? (
+          <div
+            className="muted"
+            style={{
+              padding: '8px 0'
+            }}
+          >
+            No new suggestions right now.
+          </div>
+        ) : (
+          <div
+            className="onstood-home-suggestion-row"
+            style={{
+              display: 'grid',
+              gridTemplateColumns:
+                'repeat(4, minmax(0,1fr))',
+              gap: 9
+            }}
+          >
+            {visiblePeopleSuggestions.map(
+              person => (
+                <div
+                  key={person.id}
+                  className="onstood-home-suggestion-item"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns:
+                      'auto minmax(0,1fr)',
+                    gap: 9,
+                    alignItems: 'center',
+                    minWidth: 0,
+                    padding: '9px 10px',
+                    border:
+                      '1px solid rgba(15,23,42,.08)',
+                    borderRadius: 12,
+                    background: '#fff'
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenProfile?.(
+                        person.id
+                      )
+                    }
+                    aria-label={`Open ${person.name || 'student'} profile`}
+                    style={{
+                      border: 0,
+                      background:
+                        'transparent',
+                      padding: 0,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <Avatar
+                      profile={person}
+                      size="md"
+                    />
+                  </button>
+
+                  <div
+                    style={{
+                      minWidth: 0
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenProfile?.(
+                          person.id
+                        )
+                      }
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        border: 0,
+                        background:
+                          'transparent',
+                        padding: 0,
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        fontWeight: 800,
+                        overflow: 'hidden',
+                        textOverflow:
+                          'ellipsis',
+                        whiteSpace:
+                          'nowrap'
+                      }}
+                    >
+                      {person.name || ''}{' '}
+                      {person.surname || ''}
+                    </button>
+
+                    <small
+                      className="muted"
+                      style={{
+                        display: 'block',
+                        overflow: 'hidden',
+                        textOverflow:
+                          'ellipsis',
+                        whiteSpace:
+                          'nowrap',
+                        marginTop: 2
+                      }}
+                      title={
+                        person.university || ''
+                      }
+                    >
+                      {person.university ||
+                        'University'}
+                    </small>
+
+                    <small
+                      className="muted"
+                      style={{
+                        display: 'block',
+                        overflow: 'hidden',
+                        textOverflow:
+                          'ellipsis',
+                        whiteSpace:
+                          'nowrap'
+                      }}
+                      title={
+                        person.degree || ''
+                      }
+                    >
+                      {person.degree ||
+                        'Degree not specified'}
+                    </small>
+
+                    <button
+                      type="button"
+                      className="btn subtle"
+                      onClick={() =>
+                        connectSuggestedPerson(
+                          person.id
+                        )
+                      }
+                      style={{
+                        minHeight: 30,
+                        height: 30,
+                        padding:
+                          '0 9px',
+                        marginTop: 7,
+                        fontSize: 11
+                      }}
+                    >
+                      <UserPlus size={13} />
+                      Connect
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </section>
+
 
       {mobileTip && (
         <section className={`hero onstood-home-mobile-tip ${mobileTipVisible ? 'active' : ''}`}>
@@ -1753,13 +2424,13 @@ export default function HomePage({
         />
 
         <Stat
-          label="Documents"
+          label="My Library"
           value={
             overviewLoading
               ? '…'
               : overview.documents
           }
-          onClick={() => go('documents')}
+          onClick={() => go('docs')}
         />
       </div>
 
@@ -1958,34 +2629,40 @@ export default function HomePage({
                           zIndex: 15000,
                           width: 190,
                           padding: 6,
+                          borderRadius: 14,
                           boxShadow:
-                            '0 14px 38px rgba(15,23,42,.18)'
+                            '0 18px 44px rgba(15,23,42,.16)'
                         }}
                       >
                         <label
                           className="btn subtle"
                           style={{
                             width: '100%',
-                            justifyContent:
-                              'flex-start',
-                            cursor:
-                              'pointer',
-                            marginBottom: 4
+                            justifyContent: 'flex-start',
+                            cursor: 'pointer',
+                            marginBottom: 4,
+                            position: 'relative',
+                            overflow: 'hidden'
                           }}
                         >
                           📷 Photo
                           <input
                             id="onstood-post-photo-input"
                             type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            accept="image/*"
                             multiple
-                            hidden
-                            onChange={event =>
-                              addPostFiles(
-                                event.target
-                                  .files
-                              )
-                            }
+                            onChange={event => {
+                              addPostFiles(event.currentTarget.files);
+                              event.currentTarget.value = '';
+                            }}
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              opacity: 0,
+                              cursor: 'pointer'
+                            }}
                           />
                         </label>
 
@@ -1993,11 +2670,42 @@ export default function HomePage({
                           className="btn subtle"
                           style={{
                             width: '100%',
-                            justifyContent:
-                              'flex-start',
-                            cursor:
-                              'pointer',
-                            marginBottom: 4
+                            justifyContent: 'flex-start',
+                            cursor: 'pointer',
+                            marginBottom: 4,
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          📸 Camera
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={event => {
+                              addPostFiles(event.currentTarget.files);
+                              event.currentTarget.value = '';
+                            }}
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              opacity: 0,
+                              cursor: 'pointer'
+                            }}
+                          />
+                        </label>
+
+                        <label
+                          className="btn subtle"
+                          style={{
+                            width: '100%',
+                            justifyContent: 'flex-start',
+                            cursor: 'pointer',
+                            marginBottom: 4,
+                            position: 'relative',
+                            overflow: 'hidden'
                           }}
                         >
                           🎬 Video
@@ -2006,13 +2714,18 @@ export default function HomePage({
                             type="file"
                             accept="video/mp4,video/webm,video/quicktime"
                             multiple
-                            hidden
-                            onChange={event =>
-                              addPostFiles(
-                                event.target
-                                  .files
-                              )
-                            }
+                            onChange={event => {
+                              addPostFiles(event.currentTarget.files);
+                              event.currentTarget.value = '';
+                            }}
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              opacity: 0,
+                              cursor: 'pointer'
+                            }}
                           />
                         </label>
 
@@ -2020,10 +2733,10 @@ export default function HomePage({
                           className="btn subtle"
                           style={{
                             width: '100%',
-                            justifyContent:
-                              'flex-start',
-                            cursor:
-                              'pointer'
+                            justifyContent: 'flex-start',
+                            cursor: 'pointer',
+                            position: 'relative',
+                            overflow: 'hidden'
                           }}
                         >
                           📄 Document
@@ -2032,13 +2745,18 @@ export default function HomePage({
                             type="file"
                             accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv"
                             multiple
-                            hidden
-                            onChange={event =>
-                              addPostFiles(
-                                event.target
-                                  .files
-                              )
-                            }
+                            onChange={event => {
+                              addPostFiles(event.currentTarget.files);
+                              event.currentTarget.value = '';
+                            }}
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              width: '100%',
+                              height: '100%',
+                              opacity: 0,
+                              cursor: 'pointer'
+                            }}
                           />
                         </label>
                       </div>
@@ -2111,7 +2829,7 @@ export default function HomePage({
                         );
                       }}
                     />
-                    ONSTOOD Knowledge
+                    <OnstoodWordmark /> Knowledge
                   </label>
 
                   <button
@@ -2261,7 +2979,7 @@ export default function HomePage({
                             '1.05px'
                         }}
                       >
-                        SUGGESTED BY AI
+                        SUGGESTED BY <OnstoodWordmark /> AI
                       </span>
 
                       <span
@@ -2356,7 +3074,7 @@ export default function HomePage({
                           opacity: .55
                         }}
                       >
-                        Click to explore with AI
+                        Click to explore with <OnstoodWordmark /> AI
                       </small>
                     )}
 
@@ -2396,12 +3114,12 @@ export default function HomePage({
                               'standard'
                             );
                           }}
-                          title="Ask AI to explain this post"
+                          title="Ask ONSTOOD AI to explain this post"
                         >
                           <span className="onstood-global-selection-flow" />
                           <span className="onstood-global-selection-led" />
                           <span className="onstood-global-selection-label">
-                            ASK AI
+                            ASK <OnstoodWordmark /> AI
                           </span>
                         </button>
 
@@ -2434,7 +3152,7 @@ export default function HomePage({
                           <span className="onstood-global-selection-flow" />
                           <span className="onstood-global-selection-led" />
                           <span className="onstood-global-selection-label">
-                            ASK ADVANCED AI
+                            ASK ADVANCED <OnstoodWordmark /> AI
                           </span>
                         </button>
                       </div>
@@ -2487,6 +3205,7 @@ export default function HomePage({
                   setMailTarget(post);
                   setSelectedConnectionId('');
                 }}
+                onEditPost={body => editPost(post, body)}
                 onDelete={() =>
                   deletePost(post.id)
                 }
@@ -2507,6 +3226,14 @@ export default function HomePage({
                     enabled
                   )
                 }
+                onDeleteComment={comment =>
+                  deleteComment(post.id, comment)
+                }
+                onEditComment={(comment, body) => editComment(post.id, comment, body)}
+                commentLikeCounts={commentLikes}
+                commentLikedByMe={commentLikedByMe}
+                onToggleCommentLike={toggleCommentLike}
+                onReplyComment={(comment, body) => replyToComment(post.id, comment, body)}
               />
             );
           }
@@ -2554,7 +3281,7 @@ export default function HomePage({
 
             <p className="muted">
               Public makes the shared post
-              visible across ONSTOOD.
+              visible across <OnstoodWordmark />.
               Connections limits it to
               accepted connections.
             </p>

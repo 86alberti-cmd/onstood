@@ -614,7 +614,7 @@ export function Auth({ onReady }) {
          ========================= 
          */}
 
-      <div className={`auth-card ${mode === 'register' ? 'auth-card-register' : 'auth-card-login'}`}>
+      <div className="auth-card">
 
         <div className="brand">
           <OnstoodWordmark /><span>.</span>
@@ -1909,38 +1909,6 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
     .knowledge-chip { width:82px; height:82px; border-radius:16px; }
     .knowledge-chip-core { inset:17px; font-size:22px; }
     .knowledge-label { font-size:10px; padding:4px 8px; }
-  }
-
-  /* Register stays only slightly larger than Sign in and never spills outside its card. */
-  .auth-card form > input,
-  .auth-card form > select,
-  .auth-card form > textarea,
-  .auth-card form .grid2 > input,
-  .auth-card form .grid2 > select {
-    width:100%;
-    min-width:0;
-    max-width:100%;
-  }
-
-  .auth-card-register {
-    width:min(500px, calc(100vw - 42px)) !important;
-    max-width:500px !important;
-    padding:24px 30px 22px !important;
-  }
-  .auth-card-register .tabs { margin-top:18px; }
-  .auth-card-register form { gap:8px; margin-top:16px; }
-  .auth-card-register input,
-  .auth-card-register select { padding:10px 12px; min-height:42px; }
-  .auth-card-register .grid2 { gap:10px; }
-  .auth-card-register .onstood-auth-credit { margin-top:12px; padding-top:10px; }
-
-  @media (min-width:901px) and (max-height:850px) {
-    .auth-card-register { padding-top:20px !important; padding-bottom:18px !important; }
-    .auth-card-register > .muted { margin:10px 0; }
-    .auth-card-register .tabs { margin-top:12px; }
-    .auth-card-register form { margin-top:12px; gap:7px; }
-    .auth-card-register input, .auth-card-register select { min-height:40px; padding:9px 11px; }
-    .auth-card-register .onstood-auth-credit { margin-top:8px; padding-top:8px; }
   }
 
   @media (prefers-reduced-motion:reduce) {

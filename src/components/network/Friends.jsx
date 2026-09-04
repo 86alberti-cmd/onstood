@@ -98,6 +98,8 @@ export default function Friends({
 
   const [followingIds, setFollowingIds] = useState([]);
   const [blockingId, setBlockingId] = useState(null);
+  const [chatRequests, setChatRequests] = useState([]);
+  const [chatRequestBusy, setChatRequestBusy] = useState(false);
 
   async function loadFollowingIds() {
     const { data, error } = await supabase
@@ -129,6 +131,89 @@ export default function Friends({
   }
 
   useEffect(() => { loadFollowingIds(); }, [profile.id]);
+
+  async function loadChatRequests() {
+    const { data, error } = await supabase
+      .from('chat_requests')
+      .select('*')
+      .or(`sender_id.eq.${profile.id},receiver_id.eq.${profile.id}`)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('Chat request load error:', error);
+      return;
+    }
+    setChatRequests(data || []);
+  }
+
+  useEffect(() => { loadChatRequests(); }, [profile.id]);
+
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`network-chat-requests-${profile.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'chat_requests'
+      }, payload => {
+        const row = payload.new?.id ? payload.new : payload.old;
+        if (!row) return;
+        if (row.sender_id !== profile.id && row.receiver_id !== profile.id) return;
+        loadChatRequests();
+      })
+      .subscribe();
+
+    return () => { channel.unsubscribe(); };
+  }, [profile.id]);
+
+  function latestChatRequest(personId) {
+    return chatRequests.find(item =>
+      (item.sender_id === profile.id && item.receiver_id === personId) ||
+      (item.receiver_id === profile.id && item.sender_id === personId)
+    ) || null;
+  }
+
+  function hasAcceptedChat(personId) {
+    return chatRequests.some(item => item.status === 'accepted' && (
+      (item.sender_id === profile.id && item.receiver_id === personId) ||
+      (item.receiver_id === profile.id && item.sender_id === personId)
+    ));
+  }
+
+  async function sendChatRequest(personId) {
+    if (!personId || chatRequestBusy) return;
+    setChatRequestBusy(true);
+    const { error } = await supabase.rpc('send_chat_request', { p_user_id: personId });
+    setChatRequestBusy(false);
+    if (error) { notify(error.message); return; }
+    await loadChatRequests();
+    notify('Chat request sent.');
+  }
+
+  async function cancelChatRequest(requestId) {
+    if (!requestId || chatRequestBusy) return;
+    setChatRequestBusy(true);
+    const { error } = await supabase.rpc('cancel_chat_request', { p_request_id: requestId });
+    setChatRequestBusy(false);
+    if (error) { notify(error.message); return; }
+    await loadChatRequests();
+    notify('Chat request cancelled.');
+  }
+
+  async function answerChatRequest(requestId, accept) {
+    if (!requestId || chatRequestBusy) return;
+    setChatRequestBusy(true);
+    const { data, error } = await supabase.rpc('respond_chat_request', {
+      p_request_id: requestId,
+      p_accept: accept
+    });
+    setChatRequestBusy(false);
+    if (error) { notify(error.message); return; }
+    await loadChatRequests();
+    notify(accept ? 'Chat request accepted.' : 'Chat request declined.');
+    if (accept && data) onOpenChat?.(profile.id === selectedPerson?.id ? null : selectedPerson?.id);
+  }
+
 
 
   /* -------------------------------------------------------
@@ -860,8 +945,13 @@ export default function Friends({
         person.id
       );
 
+    const chatRequest = latestChatRequest(person.id);
+    const chatAccepted = hasAcceptedChat(person.id);
+    const chatPendingOutgoing = chatRequest?.status === 'pending' && chatRequest.sender_id === profile.id;
+    const chatPendingIncoming = chatRequest?.status === 'pending' && chatRequest.receiver_id === profile.id;
+
     const canChat =
-      status === 'connected';
+      status === 'connected' || chatAccepted;
 
 
     return (
@@ -1156,39 +1246,70 @@ export default function Friends({
           }}
         >
 
-          <button
-            type="button"
-            className={
-              canChat
-                ? 'btn primary'
-                : 'btn subtle'
-            }
-            disabled={
-              !canChat
-            }
-            title={
-              status !== 'connected'
-                ? 'Chat is available between accepted connections.'
-                : `Chat with ${person.name || 'student'}${isOnline ? '' : ' (offline)'}`
-            }
-            onClick={() =>
-              onOpenChat?.(
-                person.id
-              )
-            }
-          >
-            <MessageCircle size={16} />
+          {canChat ? (
+            <button
+              type="button"
+              className="btn primary"
+              title={`Chat with ${person.name || 'student'}${isOnline ? '' : ' (offline)'}`}
+              onClick={() => onOpenChat?.(person.id)}
+            >
+              <MessageCircle size={16} />
+              {`Chat with ${person.name || 'student'}`}
+            </button>
+          ) : chatPendingOutgoing ? (
+            <>
+              <button type="button" className="btn subtle" disabled>
+                <MessageCircle size={16} />
+                Chat request pending
+              </button>
+              <button
+                type="button"
+                className="btn subtle"
+                disabled={chatRequestBusy}
+                onClick={() => cancelChatRequest(chatRequest.id)}
+              >
+                {chatRequestBusy ? 'Cancelling…' : 'Cancel chat request'}
+              </button>
+            </>
+          ) : chatPendingIncoming ? (
+            <>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={chatRequestBusy}
+                onClick={() => answerChatRequest(chatRequest.id, true)}
+              >
+                <MessageCircle size={16} />
+                Accept chat
+              </button>
+              <button
+                type="button"
+                className="btn subtle"
+                disabled={chatRequestBusy}
+                onClick={() => answerChatRequest(chatRequest.id, false)}
+              >
+                Decline
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn primary"
+              disabled={chatRequestBusy}
+              title="Send a chat request. If accepted once, you can keep chatting without another request."
+              onClick={() => sendChatRequest(person.id)}
+            >
+              <MessageCircle size={16} />
+              {chatRequestBusy ? 'Sending…' : 'Request chat'}
+            </button>
+          )}
 
-            {status === 'connected'
-              ? `Chat with ${person.name || 'student'}`
-              : 'Chat unavailable'}
-          </button>
 
 
           <button type="button" className="btn subtle" disabled={blockingId === person.id} onClick={() => blockPerson(person)} style={{ color: '#b91c1c' }}>
             {blockingId === person.id ? 'Blocking…' : `Block ${person.name || 'person'}`}
           </button>
-          <span className="muted" style={{ width: '100%', fontSize: 12 }}>Messages are delivered even when a connection is offline.</span>
+          <span className="muted" style={{ width: '100%', fontSize: 12 }}>{canChat ? 'Chat access stays open after one accepted request. Messages are delivered even when the person is offline.' : chatPendingOutgoing ? 'Waiting for this person to accept or decline your chat request.' : chatPendingIncoming ? 'This person wants to chat with you. Accept once to keep chat access open.' : 'Not connected? Send a chat request. If it is declined, you can request again later.'}</span>
 
         </div>
 

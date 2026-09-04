@@ -1940,7 +1940,7 @@ export function PostOffice({
     function syncMobileChatHeight() {
 
       if (
-        window.innerWidth > 1024 ||
+        window.innerWidth > 760 ||
         !conversationCardRef.current
       ) {
         document.documentElement.style

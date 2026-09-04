@@ -1771,7 +1771,7 @@ export function Documents({
 
 
       <style>{`
-        @media (max-width: 1024px) {
+        @media (max-width: 767px) {
           .onstood-doc-privacy-card {
             border-radius: 16px !important;
             margin-top: 8px !important;

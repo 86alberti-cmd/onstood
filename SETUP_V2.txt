@@ -1,0 +1,13 @@
+ONSTOOD V2 — QUICK START
+
+1. Extract this package to a NEW folder, for example:
+   C:\Users\USER\Desktop\Onstood V2
+
+2. Copy ONLY the existing `.env` file from your working V1 folder into the root of V2.
+   Do not copy node_modules.
+
+3. Open CMD in the V2 project folder and run:
+   npm install
+   npm run dev
+
+4. Test Home and Admin Control first.
