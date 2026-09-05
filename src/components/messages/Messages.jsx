@@ -2626,10 +2626,10 @@ export function PostOffice({
           .order(
             'created_at',
             {
-              ascending: true
+              ascending: false
             }
           )
-          .limit(300),
+          .limit(100),
 
         supabase
           .from('message_deletions')
@@ -2694,6 +2694,7 @@ export function PostOffice({
 
               return true;
             })
+            .reverse()
         );
 
       }

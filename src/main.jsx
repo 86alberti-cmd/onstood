@@ -517,41 +517,55 @@ function App({ session }) {
 
   useEffect(() => {
     let active = true;
+    const CACHE_KEY = 'onstood:knowledge-stats:v1';
+    const CACHE_TTL = 10 * 60 * 1000;
 
-    async function loadKnowledgeStats() {
-      const { data, error } =
-        await supabase.rpc(
-          'onstood_public_knowledge_stats'
-        );
-
-      if (!active || error || !data) {
-        return;
-      }
-
+    function applyKnowledgeStats(data) {
+      if (!active || !data) return;
       setKnowledgeStats({
-        academic_records:
-          Number(data.academic_records || 0),
-        user_contributors:
-          Number(data.user_contributors || 0),
-        total_records:
-          Number(data.total_records || 0),
-        indexed:
-          Number(data.indexed || 0),
-        reference_only:
-          Number(data.reference_only || 0)
+        academic_records: Number(data.academic_records || 0),
+        user_contributors: Number(data.user_contributors || 0),
+        total_records: Number(data.total_records || 0),
+        indexed: Number(data.indexed || 0),
+        reference_only: Number(data.reference_only || 0)
       });
+    }
+
+    function readCachedKnowledgeStats() {
+      try {
+        const cached = JSON.parse(window.localStorage.getItem(CACHE_KEY) || 'null');
+        if (cached?.data) applyKnowledgeStats(cached.data);
+        return cached;
+      } catch {
+        return null;
+      }
+    }
+
+    async function loadKnowledgeStats(force = false) {
+      const cached = readCachedKnowledgeStats();
+      if (!force && cached?.savedAt && Date.now() - cached.savedAt < CACHE_TTL) return;
+
+      const { data, error } = await supabase.rpc('onstood_public_knowledge_stats');
+      if (!active || error || !data) return;
+
+      applyKnowledgeStats(data);
+      try {
+        window.localStorage.setItem(CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+      } catch {
+        // Storage can be unavailable in private/restricted browser modes.
+      }
     }
 
     loadKnowledgeStats();
 
-    const timer = window.setInterval(
-      loadKnowledgeStats,
-      60000
-    );
+    function refreshWhenVisible() {
+      if (document.visibilityState === 'visible') loadKnowledgeStats();
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       active = false;
-      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
 
