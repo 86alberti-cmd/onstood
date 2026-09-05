@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import OnstoodWordmark from '../OnstoodWordmark';
 import { BookOpen, BriefcaseBusiness } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import authLibrary11am from '../../assets/auth-library-11am.jpg';
 
 
 function OnstoodKnowledgeFlow() {
@@ -1677,7 +1678,7 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
     overflow: hidden;
     background-image:
       linear-gradient(90deg, rgba(20,28,38,.18) 0%, rgba(20,28,38,.08) 47%, rgba(255,255,255,.08) 66%, rgba(255,255,255,.42) 100%),
-      url("https://images.unsplash.com/photo-1758801305056-a9a1d4bc0c06?auto=format&fit=crop&fm=jpg&ixlib=rb-4.1.0&q=72&w=3000") !important;
+      url("${authLibrary11am}") !important;
     background-size: cover !important;
     background-position: center 52% !important;
     background-repeat: no-repeat !important;
@@ -1895,6 +1896,47 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
   .onstood-auth-credit span { margin:0 8px; opacity:.55; }
   .onstood-auth-credit strong { color:#6557ee; font-weight:800; }
 
+  /* Keep the real library photo visible on tablet/mobile too.
+     Global styles hide .auth-left at <=1024px, so we turn it into a
+     full-screen visual background layer instead of removing it. */
+  @media (max-width:1024px) {
+    .auth-shell {
+      position: relative !important;
+      min-height: 100dvh !important;
+      background-image:
+        linear-gradient(160deg, rgba(18,24,32,.14) 0%, rgba(30,36,44,.05) 44%, rgba(255,255,255,.14) 72%, rgba(255,255,255,.28) 100%),
+        url("${authLibrary11am}") !important;
+      background-size: cover !important;
+      background-position: center center !important;
+      background-repeat: no-repeat !important;
+    }
+
+    .auth-left {
+      display: block !important;
+      position: absolute !important;
+      inset: 0 !important;
+      min-height: 100% !important;
+      padding: 0 !important;
+      z-index: 0 !important;
+      pointer-events: none !important;
+      background-image:
+        linear-gradient(160deg, rgba(18,24,32,.12) 0%, rgba(30,36,44,.03) 46%, rgba(255,255,255,.10) 74%, rgba(255,255,255,.20) 100%),
+        url("${authLibrary11am}") !important;
+      background-size: cover !important;
+      background-position: center center !important;
+      background-repeat: no-repeat !important;
+    }
+
+    .auth-left > * {
+      display: none !important;
+    }
+
+    .auth-card {
+      position: relative !important;
+      z-index: 10 !important;
+    }
+  }
+
   @media (max-width:900px) {
     .auth-card {
       width: min(92vw, 430px) !important;
@@ -1904,7 +1946,13 @@ const ONSTOOD_AUTH_VISUAL_STYLES = `
 
     .auth-shell {
       overflow:auto;
-      background:linear-gradient(160deg,#6858ea 0%,#9c90f4 34%,#eeeaff 70%,#fff 100%) !important;
+      background-image:
+        linear-gradient(160deg, rgba(18,24,32,.18) 0%, rgba(30,36,44,.08) 42%, rgba(255,255,255,.20) 72%, rgba(255,255,255,.34) 100%),
+        url("${authLibrary11am}") !important;
+      background-size: cover !important;
+      background-position: center center !important;
+      background-repeat: no-repeat !important;
+      background-attachment: scroll !important;
     }
     .auth-left { min-height:auto; }
     .onstood-knowledge-flow {

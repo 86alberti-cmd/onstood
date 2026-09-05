@@ -1931,6 +1931,9 @@ export function PostOffice({
         .removeProperty(
           '--onstood-mobile-chat-height'
         );
+      document.documentElement.classList.remove(
+        'onstood-chat-keyboard-open'
+      );
       return;
     }
 
@@ -1963,8 +1966,22 @@ export function PostOffice({
         (viewport?.offsetTop || 0) +
         viewportHeight;
 
-      const mobileBottomNavReserve =
-        104;
+      // visualViewport already ends exactly at the top of the software
+      // keyboard. Do not reserve the mobile bottom navigation while the
+      // keyboard is open; that was the large empty gap below the composer.
+      const keyboardInset = Math.max(
+        0,
+        window.innerHeight -
+          ((viewport?.height || window.innerHeight) +
+            (viewport?.offsetTop || 0))
+      );
+      const keyboardOpen = keyboardInset > 120;
+      const mobileBottomNavReserve = keyboardOpen ? 0 : 104;
+
+      document.documentElement.classList.toggle(
+        'onstood-chat-keyboard-open',
+        keyboardOpen
+      );
 
       const available =
         Math.max(
@@ -2024,6 +2041,9 @@ export function PostOffice({
         .removeProperty(
           '--onstood-mobile-chat-height'
         );
+      document.documentElement.classList.remove(
+        'onstood-chat-keyboard-open'
+      );
     };
 
   }, [

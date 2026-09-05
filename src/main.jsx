@@ -4138,10 +4138,38 @@ function App({ session }) {
             -webkit-text-size-adjust: 100%;
           }
 
+          /* Mobile scroll stability: keep the document as the main vertical
+             scroller. This avoids Android Chrome getting trapped inside
+             nested layout containers while preserving horizontal clipping. */
+          html,
+          body {
+            min-height: 100%;
+            height: auto;
+            overscroll-behavior-y: auto;
+            touch-action: pan-y pinch-zoom;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          #root {
+            min-height: 100dvh;
+            height: auto;
+          }
+
           .app-shell {
             width: 100%;
             max-width: 100vw;
+            min-height: 100dvh;
+            height: auto;
             overflow-x: hidden;
+            overflow-y: visible;
+          }
+
+          .app-grid,
+          .content {
+            height: auto !important;
+            min-height: 0;
+            overflow-y: visible !important;
+            touch-action: pan-y pinch-zoom;
           }
 
           .topbar {
@@ -4666,8 +4694,9 @@ function App({ session }) {
             min-height: 0 !important;
             overflow-y: auto !important;
             overflow-x: hidden !important;
-            overscroll-behavior: contain;
+            overscroll-behavior-y: contain;
             -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
           }
 
           .postoffice-composer {
@@ -4677,13 +4706,14 @@ function App({ session }) {
             flex: 0 0 auto !important;
             background: #fff !important;
             grid-template-columns:
-              34px 34px 34px 34px minmax(0,1fr) 38px !important;
-            gap: 5px !important;
-            padding: 8px !important;
+              30px 30px 30px 30px minmax(0,1fr) 36px !important;
+            gap: 3px !important;
+            padding: 5px 6px !important;
           }
 
           .postoffice-composer input:not([type="file"]) {
-            min-height: 40px !important;
+            min-height: 36px !important;
+            height: 36px !important;
             font-size: 16px !important;
           }
 
