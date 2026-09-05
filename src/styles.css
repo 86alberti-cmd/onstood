@@ -354,3 +354,35 @@ body{background:radial-gradient(circle at 18% -10%,rgba(99,91,255,.055),transpar
 /* Notification deep-link focus: subtle, temporary and layout-safe. */
 .onstood-notification-focus{outline:2px solid rgba(99,102,241,.34);outline-offset:4px;border-radius:16px;animation:onstoodNotificationFocus 2.2s ease both}
 @keyframes onstoodNotificationFocus{0%,100%{box-shadow:0 0 0 0 rgba(99,102,241,0)}18%,72%{box-shadow:0 0 0 8px rgba(99,102,241,.10)}}
+
+
+/* ONSTOOD mobile native one-finger scroll guard — 2026-09-05
+   Keep Android/iOS page scrolling under browser control. Desktop unchanged. */
+@media (max-width:1024px){
+  html,body,#root{
+    height:auto!important;
+    min-height:100%;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    overscroll-behavior-y:auto!important;
+    touch-action:auto!important;
+    -webkit-overflow-scrolling:touch;
+  }
+  #root{min-height:100dvh}
+  .app-shell,.app-grid,.content{
+    height:auto!important;
+    min-height:0;
+    overflow-y:visible!important;
+    overscroll-behavior-y:auto!important;
+    touch-action:auto!important;
+  }
+  /* Dedicated inner scrollers still scroll natively with one finger. */
+  .postoffice-message-scroll,
+  .library-list,
+  .creator-modal,
+  .onstood-upgrade-scroll,
+  .mobile-more-sheet{
+    -webkit-overflow-scrolling:touch;
+    touch-action:auto!important;
+  }
+}

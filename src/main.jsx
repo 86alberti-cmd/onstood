@@ -4145,8 +4145,12 @@ function App({ session }) {
           body {
             min-height: 100%;
             height: auto;
-            overscroll-behavior-y: auto;
-            touch-action: pan-y pinch-zoom;
+            overflow-y: auto !important;
+            overscroll-behavior-y: auto !important;
+            /* Let Android Chrome own the native one-finger gesture.
+               Explicit pan-y here was still being treated as a gesture
+               boundary on some mobile layouts. */
+            touch-action: auto !important;
             -webkit-overflow-scrolling: touch;
           }
 
@@ -4169,7 +4173,8 @@ function App({ session }) {
             height: auto !important;
             min-height: 0;
             overflow-y: visible !important;
-            touch-action: pan-y pinch-zoom;
+            touch-action: auto !important;
+            overscroll-behavior-y: auto !important;
           }
 
           .topbar {
